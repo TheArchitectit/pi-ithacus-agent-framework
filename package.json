@@ -1,0 +1,29 @@
+{
+  "name": "ithacus",
+  "version": "0.1.0",
+  "description": "A pi agent framework that orchestrates coordinated sub-agent teams directly from the .pi/ithacus folder.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "notes": "Runtime depends ONLY on Node built-ins (node:sqlite, node:fs, node:path, node:os, node:child_process). TypeScript types are stripped natively by Node >= 22.6 (--experimental-strip-types); no tsc install required to run.",
+  "main": "dist/extensions/ithacus.js",
+  "pi": {
+    "extensions": [
+      "./dist/extensions/ithacus.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types scripts/smoke-src.mjs",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "guardrails": "node scripts/guardrails-scan.mjs",
+    "regression": "python3 scripts/regression_check.py --all"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

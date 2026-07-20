@@ -1,0 +1,9 @@
+{
+  "name": "ithacus",
+  "version": "0.1.0",
+  "description": "Coordinated sub-agent team orchestration for pi, resident in .pi/ithacus.",
+  "entry": "dist/extensions/ithacus.js",
+  "pi": {
+    "extensions": ["./dist/extensions/ithacus.js"]
+  }
+}

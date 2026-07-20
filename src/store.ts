@@ -1,0 +1,185 @@
+/**
+ * store.ts — opens the project's single local node:sqlite store and provides
+ * idempotent schema setup + row helpers for the ithacus tables.
+ *
+ * The store lives at `<repo>/.pi/ithacus/sqlite.db` (the folder that is the
+ * project name). One synchronous DatabaseSync handle is the source of truth —
+ * no second process, no remote DB (PREVENT-ITH-004: zero network at runtime).
+ *
+ * pi-agnostic: depends only on node built-ins + node:sqlite. Unit-testable.
+ */
+
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process"; // guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: read-only `git rev-parse` to scope memory per-repo
+import {
+  repoStateDir,
+  STATE_DIR_DEFAULT,
+  type IthacusConfig,
+} from "./config.js";
+import type {
+  IthRun,
+  IthAgent,
+  IthTask,
+  IthInboxMessage,
+  IthMemory,
+  MemoryKind,
+} from "./types.js";
+
+// Columns are camelCase so node:sqlite rows map directly onto the TS types in
+// types.ts (node:sqlite preserves column names verbatim — it does NOT camelCase
+// them). This avoids a snake_case/camelCase mismatch in every row read.
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS ith_runs (
+  runId      TEXT PRIMARY KEY,
+  modePreset TEXT NOT NULL,
+  createdAt  INTEGER NOT NULL,
+  summary    TEXT NOT NULL,
+  status     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ith_agents (
+  id        TEXT PRIMARY KEY,
+  runId     TEXT NOT NULL,
+  role      TEXT NOT NULL,
+  model     TEXT NOT NULL,
+  provider  TEXT,
+  status    TEXT NOT NULL,
+  lastSeen  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ith_tasks (
+  id         TEXT PRIMARY KEY,
+  runId      TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  ownerClaim TEXT,
+  status     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ith_inbox (
+  id         TEXT PRIMARY KEY,
+  agentId    TEXT NOT NULL,
+  fromAgent  TEXT,
+  payload    TEXT NOT NULL,
+  ts         INTEGER NOT NULL,
+  read       INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS ith_memories (
+  id      TEXT PRIMARY KEY,
+  kind    TEXT NOT NULL,
+  text    TEXT NOT NULL,
+  repoId  TEXT NOT NULL,
+  ts      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_ith_agents_run ON ith_agents(runId);
+CREATE INDEX IF NOT EXISTS ix_ith_tasks_run ON ith_tasks(runId);
+CREATE INDEX IF NOT EXISTS ix_ith_inbox_agent ON ith_inbox(agentId, read);
+CREATE INDEX IF NOT EXISTS ix_ith_mem_repo ON ith_memories(repoId, kind);
+`;
+
+export class IthStore {
+  readonly db: DatabaseSync;
+  readonly stateDir: string;
+
+  constructor(cwd: string | undefined, config: IthacusConfig) {
+    this.stateDir = repoStateDir(cwd, STATE_DIR_DEFAULT);
+    mkdirSync(this.stateDir, { recursive: true });
+    this.db = new DatabaseSync(join(this.stateDir, "sqlite.db"));
+    this.db.exec(SCHEMA);
+  }
+
+  // ---- runs -----------------------------------------------------------------
+  createRun(run: IthRun): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_runs (runId, modePreset, createdAt, summary, status)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(run.runId, run.modePreset, run.createdAt, run.summary, run.status);
+  }
+  setRunStatus(runId: string, status: IthRun["status"]): void {
+    this.db.prepare(`UPDATE ith_runs SET status = ? WHERE runId = ?`).run(status, runId);
+  }
+  getRun(runId: string): IthRun | undefined {
+    return this.db.prepare(`SELECT * FROM ith_runs WHERE runId = ?`).get(runId) as
+      | IthRun
+      | undefined;
+  }
+
+  // ---- agents ---------------------------------------------------------------
+  upsertAgent(a: IthAgent): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_agents (id, runId, role, model, provider, status, lastSeen)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(a.id, a.runId, a.role, a.model, a.provider, a.status, a.lastSeen);
+  }
+  agentsForRun(runId: string): IthAgent[] {
+    return this.db.prepare(`SELECT * FROM ith_agents WHERE runId = ? ORDER BY role`).all(runId) as IthAgent[];
+  }
+
+  // ---- tasks (TaskClaim-style dedupe) --------------------------------------
+  createTask(t: IthTask): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_tasks (id, runId, title, ownerClaim, status)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(t.id, t.runId, t.title, t.ownerClaim, t.status);
+  }
+  /** Claim a task for an agent; returns false if already claimed by someone else. */
+  claimTask(taskId: string, agentId: string): boolean {
+    const t = this.db.prepare(`SELECT * FROM ith_tasks WHERE id = ?`).get(taskId) as
+      | IthTask
+      | undefined;
+    if (!t) return false;
+    if (t.ownerClaim && t.ownerClaim !== agentId) return false;
+    this.db.prepare(`UPDATE ith_tasks SET ownerClaim = ?, status = 'claimed' WHERE id = ?`)
+      .run(agentId, taskId);
+    return true;
+  }
+  openTasks(runId: string): IthTask[] {
+    return this.db.prepare(`SELECT * FROM ith_tasks WHERE runId = ? AND status != 'completed'`).all(runId) as IthTask[];
+  }
+
+  // ---- inbox (in-DB mailbox) ------------------------------------------------
+  sendMessage(m: IthInboxMessage): void {
+    this.db.prepare(
+      `INSERT INTO ith_inbox (id, agentId, fromAgent, payload, ts, read)
+       VALUES (?, ?, ?, ?, ?, 0)`,
+    ).run(m.id, m.agentId, m.fromAgent, m.payload, m.ts);
+  }
+  unread(agentId: string): IthInboxMessage[] {
+    return this.db.prepare(`SELECT * FROM ith_inbox WHERE agentId = ? AND read = 0 ORDER BY ts`).all(agentId) as IthInboxMessage[];
+  }
+  markRead(id: string): void {
+    this.db.prepare(`UPDATE ith_inbox SET read = 1 WHERE id = ?`).run(id);
+  }
+
+  // ---- memories -------------------------------------------------------------
+  addMemory(m: IthMemory): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_memories (id, kind, text, repoId, ts)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(m.id, m.kind, m.text, m.repoId, m.ts);
+  }
+  /** Recall memories for a repo, optionally filtered by kind. */
+  recall(repoId: string, kind?: MemoryKind, limit = 8): IthMemory[] {
+    const sql = kind
+      ? `SELECT * FROM ith_memories WHERE repoId = ? AND kind = ? ORDER BY ts DESC LIMIT ?`
+      : `SELECT * FROM ith_memories WHERE repoId = ? ORDER BY ts DESC LIMIT ?`;
+    const args = kind ? [repoId, kind, limit] : [repoId, limit];
+    return this.db.prepare(sql).all(...args) as IthMemory[];
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+/** Convenience: derive a stable repo_id from a cwd (used for memory scoping). */
+export function repoIdFromCwd(cwd: string | undefined): string {
+  try {
+    const root = execSync("git rev-parse --show-toplevel", {
+      cwd: cwd ?? ".",
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return root || cwd || "global";
+  } catch {
+    return cwd || "global";
+  }
+}

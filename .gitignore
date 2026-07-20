@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Environment / secrets (PREVENT: never commit)
+.env
+.env.local
+*.local
+
+# Logs
+*.log
+logs/
+
+# ithacus runtime state (the resident .pi/ithacus folder travels with repos,
+# but ignore any stray local state in THIS repo)
+.pi/ithacus/
+.pi/
