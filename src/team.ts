@@ -130,6 +130,8 @@ export function planRun(opts: {
       provider: opts.resolved.provider,
       status: "spawning",
       lastSeen: opts.now,
+      resultSchema: null,
+      resultValidated: false,
     });
   }
   return {
