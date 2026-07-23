@@ -31,3 +31,6 @@ logs/
 # but ignore any stray local state in THIS repo)
 .pi/ithacus/
 .pi/
+
+# Scratch / audit probe scripts
+tmp/
