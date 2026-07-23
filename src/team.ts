@@ -12,7 +12,8 @@
  */
 
 import { MODE_PRESETS, type ModePreset } from "./config.js";
-import type { AgentRole, IthAgent, IthRun } from "./types.js";
+import type { AgentRole, IthAgent, IthRun, IthTask, WorkflowNode } from "./types.js";
+import { generateWaves, validateDag } from "./workflow.js";
 
 export interface ResolvedModel {
   id: string;
@@ -72,6 +73,8 @@ export function buildModelChain(
 export interface TeamPlan {
   run: IthRun;
   agents: IthAgent[];
+  /** tasks derived from a workflow DAG, when one was supplied. */
+  tasks?: IthTask[];
 }
 
 /**
@@ -79,6 +82,29 @@ export interface TeamPlan {
  * agent count (roles wrap if there are more agents than roles). Each agent gets
  * the resolved (and provider-qualified) model.
  */
+/**
+ * Build IthTask rows from a workflow DAG: validates the graph, computes
+ * execution waves, and assigns each task its `wave` and inherited `phase`.
+ */
+function tasksFromWorkflow(runId: string, workflow: WorkflowNode[]): IthTask[] {
+  validateDag(workflow);
+  const { waves } = generateWaves(workflow);
+  const waveOf = new Map<string, number>();
+  waves.forEach((wave, idx) => {
+    for (const id of wave) waveOf.set(id, idx);
+  });
+  return workflow.map((node) => ({
+    id: node.id,
+    runId,
+    title: node.taskTitle,
+    ownerClaim: null,
+    status: "open" as const,
+    dependsOn: node.dependsOn,
+    wave: waveOf.get(node.id) ?? null,
+    phase: node.role ?? null,
+  }));
+}
+
 export function planRun(opts: {
   runId: string;
   mode: ModePreset;
@@ -86,6 +112,9 @@ export function planRun(opts: {
   resolved: ResolvedModel;
   fallbackModels: string[];
   now: number;
+  /** optional workflow DAG — when supplied, plan.tasks is populated with
+   *  dependency/wave-annotated IthTask rows. */
+  workflow?: WorkflowNode[];
 }): TeamPlan {
   const preset = MODE_PRESETS[opts.mode];
   const model = resolveAgentModel(null, opts.resolved);
@@ -112,5 +141,6 @@ export function planRun(opts: {
       status: "active",
     },
     agents,
+    ...(opts.workflow ? { tasks: tasksFromWorkflow(opts.runId, opts.workflow) } : {}),
   };
 }

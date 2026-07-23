@@ -29,6 +29,7 @@ const { IthStore } = await import(join(buildDir, "store.ts"));
 const team = await import(join(buildDir, "team.ts"));
 const par = await import(join(buildDir, "parallel.ts"));
 const trim = await import(join(buildDir, "trim.ts"));
+const wf = await import(join(buildDir, "workflow.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -96,6 +97,83 @@ check("decideTrim skips when agents active", noTrim.shouldTrim === false);
 
 check("pressureBand mega at >=1.0", cfg.pressureBand(1.1) === "mega");
 check("effectiveThreshold scales with window", cfg.effectiveThresholdTokens({ tierPct: 0.7, window: 200000, fallback: 140000 }) === 140000);
+
+// ---- workflow DAG engine (Sprint 1.1) ------------------------------------
+// Graph:  a -> b -> c (line), d independent
+const dag = [
+  { id: "a", taskTitle: "A", dependsOn: [] },
+  { id: "b", taskTitle: "B", dependsOn: ["a"] },
+  { id: "c", taskTitle: "C", dependsOn: ["b"] },
+  { id: "d", taskTitle: "D", dependsOn: [] },
+];
+const sorted = wf.topologicalSort(dag);
+check("topologicalSort: deps precede dependents", sorted.indexOf("a") < sorted.indexOf("b") && sorted.indexOf("b") < sorted.indexOf("c"));
+
+const waves = wf.generateWaves(dag);
+check("generateWaves: wave 0 has independents", waves.waves[0].includes("a") && waves.waves[0].includes("d"));
+check("generateWaves: wave 1 has b", waves.waves[1].length === 1 && waves.waves[1][0] === "b");
+check("generateWaves: wave 2 has c", waves.waves[2].length === 1 && waves.waves[2][0] === "c");
+check("generateWaves: totalWaves matches", waves.totalWaves === 3);
+
+const cyc = wf.detectCycle([
+  { id: "x", taskTitle: "X", dependsOn: ["y"] },
+  { id: "y", taskTitle: "Y", dependsOn: ["x"] },
+]);
+check("detectCycle returns path for circular graph", cyc !== null && cyc[0] === cyc[cyc.length - 1]);
+
+let cycleThrew = false;
+try { wf.generateWaves([{ id: "x", taskTitle: "X", dependsOn: ["y"] }, { id: "y", taskTitle: "Y", dependsOn: ["x"] }]); }
+catch { cycleThrew = true; }
+check("generateWaves throws on cycle", cycleThrew);
+
+let dupThrew = false;
+try { wf.validateDag([{ id: "a", taskTitle: "A", dependsOn: [] }, { id: "a", taskTitle: "A2", dependsOn: [] }]); }
+catch { dupThrew = true; }
+check("validateDag rejects duplicate ids", dupThrew);
+
+let missingThrew = false;
+try { wf.validateDag([{ id: "a", taskTitle: "A", dependsOn: ["ghost"] }]); }
+catch { missingThrew = true; }
+check("validateDag rejects unknown deps", missingThrew);
+
+let validNoThrow = true;
+try { wf.validateDag(dag); } catch { validNoThrow = false; }
+check("validateDag accepts a valid DAG", validNoThrow);
+
+// planRun with a workflow -> tasks with waves assigned
+const wfPlan = team.planRun({
+  runId: "runWf", mode: "small", prompt: "do the dag", resolved, fallbackModels: [], now: 2000,
+  workflow: [
+    { id: "w1", taskTitle: "root", dependsOn: [] },
+    { id: "w2", taskTitle: "child", dependsOn: ["w1"] },
+  ],
+});
+check("planRun with workflow emits tasks", wfPlan.tasks && wfPlan.tasks.length === 2);
+const w1 = wfPlan.tasks.find((t) => t.id === "w1");
+const w2 = wfPlan.tasks.find((t) => t.id === "w2");
+check("planRun assigns wave 0 to root", w1.wave === 0 && w1.dependsOn.length === 0);
+check("planRun assigns wave 1 to child", w2.wave === 1 && w2.dependsOn[0] === "w1");
+
+// store persists dependsOn/wave/phase + resultSchema/resultValidated
+const store2 = new IthStore(tmpRepo, cfg.loadConfig());
+store2.createRun(wfPlan.run);
+for (const a of wfPlan.agents) store2.upsertAgent({ ...a, resultSchema: '{"type":"object"}', resultValidated: true });
+for (const t of wfPlan.tasks) store2.createTask(t);
+const gotW2 = store2.openTasks("runWf").find((t) => t.id === "w2");
+check("store.createTask persists dependsOn", Array.isArray(gotW2.dependsOn) && gotW2.dependsOn[0] === "w1");
+check("store.createTask persists wave", gotW2.wave === 1);
+const ag = store2.agentsForRun("runWf")[0];
+check("store.upsertAgent persists resultSchema", ag.resultSchema === '{"type":"object"}');
+check("store.upsertAgent persists resultValidated", ag.resultValidated === true);
+check("store.claimTask on workflow task works", store2.claimTask("w1", "runWf-a0") === true);
+store2.close();
+
+// backward-compat: createTask with empty dependsOn reads back []
+const store3 = new IthStore(tmpRepo, cfg.loadConfig());
+store3.createTask({ id: "bc1", runId: "runWf", title: "bc", ownerClaim: null, status: "open", dependsOn: [], wave: null, phase: null });
+const bc = store3.openTasks("runWf").find((t) => t.id === "bc1");
+check("store backward-compat default dependsOn", Array.isArray(bc.dependsOn) && bc.dependsOn.length === 0);
+store3.close();
 
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });

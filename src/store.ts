@@ -27,6 +27,17 @@ import type {
   MemoryKind,
 } from "./types.js";
 
+/** Parse a JSON-encoded dependsOn array from a DB row (defaults to []). */
+function parseDependsOn(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 // Columns are camelCase so node:sqlite rows map directly onto the TS types in
 // types.ts (node:sqlite preserves column names verbatim — it does NOT camelCase
 // them). This avoids a snake_case/camelCase mismatch in every row read.
@@ -39,20 +50,25 @@ CREATE TABLE IF NOT EXISTS ith_runs (
   status     TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ith_agents (
-  id        TEXT PRIMARY KEY,
-  runId     TEXT NOT NULL,
-  role      TEXT NOT NULL,
-  model     TEXT NOT NULL,
-  provider  TEXT,
-  status    TEXT NOT NULL,
-  lastSeen  INTEGER NOT NULL
+  id              TEXT PRIMARY KEY,
+  runId           TEXT NOT NULL,
+  role            TEXT NOT NULL,
+  model           TEXT NOT NULL,
+  provider        TEXT,
+  status          TEXT NOT NULL,
+  lastSeen        INTEGER NOT NULL,
+  resultSchema    TEXT,
+  resultValidated INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS ith_tasks (
   id         TEXT PRIMARY KEY,
   runId      TEXT NOT NULL,
   title      TEXT NOT NULL,
   ownerClaim TEXT,
-  status     TEXT NOT NULL
+  status     TEXT NOT NULL,
+  dependsOn  TEXT NOT NULL DEFAULT '[]',
+  wave       INTEGER,
+  phase      TEXT
 );
 CREATE TABLE IF NOT EXISTS ith_inbox (
   id         TEXT PRIMARY KEY,
@@ -84,6 +100,44 @@ export class IthStore {
     mkdirSync(this.stateDir, { recursive: true });
     this.db = new DatabaseSync(join(this.stateDir, "sqlite.db"));
     this.db.exec(SCHEMA);
+    this.migrateSchema();
+  }
+
+  /**
+   * Backward-compatible migration: add columns that may be absent on an
+   * existing DB (CREATE TABLE IF NOT EXISTS won't add columns to a table that
+   * already exists). Each ALTER is idempotent — wrapped in try/catch so a
+   * re-run on an already-migrated DB is a no-op. node:sqlite lacks
+   * `ADD COLUMN IF NOT EXISTS`, so we guard via PRAGMA table_info.
+   */
+  migrateSchema(): void {
+    const cols = (table: string): Set<string> =>
+      new Set(
+        (this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
+          (r) => r.name,
+        ),
+      );
+
+    const agentCols = cols("ith_agents");
+    if (!agentCols.has("resultSchema")) {
+      this.db.exec(`ALTER TABLE ith_agents ADD COLUMN resultSchema TEXT`);
+    }
+    if (!agentCols.has("resultValidated")) {
+      this.db.exec(
+        `ALTER TABLE ith_agents ADD COLUMN resultValidated INTEGER NOT NULL DEFAULT 0`,
+      );
+    }
+
+    const taskCols = cols("ith_tasks");
+    if (!taskCols.has("dependsOn")) {
+      this.db.exec(`ALTER TABLE ith_tasks ADD COLUMN dependsOn TEXT NOT NULL DEFAULT '[]'`);
+    }
+    if (!taskCols.has("wave")) {
+      this.db.exec(`ALTER TABLE ith_tasks ADD COLUMN wave INTEGER`);
+    }
+    if (!taskCols.has("phase")) {
+      this.db.exec(`ALTER TABLE ith_tasks ADD COLUMN phase TEXT`);
+    }
   }
 
   // ---- runs -----------------------------------------------------------------
@@ -105,26 +159,55 @@ export class IthStore {
   // ---- agents ---------------------------------------------------------------
   upsertAgent(a: IthAgent): void {
     this.db.prepare(
-      `INSERT OR REPLACE INTO ith_agents (id, runId, role, model, provider, status, lastSeen)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(a.id, a.runId, a.role, a.model, a.provider, a.status, a.lastSeen);
+      `INSERT OR REPLACE INTO ith_agents
+         (id, runId, role, model, provider, status, lastSeen, resultSchema, resultValidated)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      a.id,
+      a.runId,
+      a.role,
+      a.model,
+      a.provider,
+      a.status,
+      a.lastSeen,
+      a.resultSchema ?? null,
+      a.resultValidated ? 1 : 0,
+    );
   }
   agentsForRun(runId: string): IthAgent[] {
-    return this.db.prepare(`SELECT * FROM ith_agents WHERE runId = ? ORDER BY role`).all(runId) as IthAgent[];
+    return this.db.prepare(`SELECT * FROM ith_agents WHERE runId = ? ORDER BY role`).all(runId).map(
+      (row: Record<string, unknown>): IthAgent => ({
+        ...(row as unknown as IthAgent),
+        resultValidated: Boolean((row as { resultValidated?: unknown }).resultValidated),
+      }),
+    ) as IthAgent[];
   }
 
   // ---- tasks (TaskClaim-style dedupe) --------------------------------------
   createTask(t: IthTask): void {
     this.db.prepare(
-      `INSERT OR REPLACE INTO ith_tasks (id, runId, title, ownerClaim, status)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(t.id, t.runId, t.title, t.ownerClaim, t.status);
+      `INSERT OR REPLACE INTO ith_tasks
+         (id, runId, title, ownerClaim, status, dependsOn, wave, phase)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      t.id,
+      t.runId,
+      t.title,
+      t.ownerClaim,
+      t.status,
+      JSON.stringify(t.dependsOn ?? []),
+      t.wave ?? null,
+      t.phase ?? null,
+    );
   }
   /** Claim a task for an agent; returns false if already claimed by someone else. */
   claimTask(taskId: string, agentId: string): boolean {
-    const t = this.db.prepare(`SELECT * FROM ith_tasks WHERE id = ?`).get(taskId) as
-      | IthTask
+    const rawT = this.db.prepare(`SELECT * FROM ith_tasks WHERE id = ?`).get(taskId) as
+      | (IthTask & { dependsOn?: string | null })
       | undefined;
+    const t = rawT
+      ? { ...rawT, dependsOn: parseDependsOn(rawT.dependsOn) }
+      : undefined;
     if (!t) return false;
     if (t.ownerClaim && t.ownerClaim !== agentId) return false;
     this.db.prepare(`UPDATE ith_tasks SET ownerClaim = ?, status = 'claimed' WHERE id = ?`)
@@ -132,7 +215,12 @@ export class IthStore {
     return true;
   }
   openTasks(runId: string): IthTask[] {
-    return this.db.prepare(`SELECT * FROM ith_tasks WHERE runId = ? AND status != 'completed'`).all(runId) as IthTask[];
+    return this.db.prepare(`SELECT * FROM ith_tasks WHERE runId = ? AND status != 'completed'`).all(runId).map(
+      (row: Record<string, unknown>): IthTask => ({
+        ...(row as unknown as IthTask),
+        dependsOn: parseDependsOn((row as { dependsOn?: string | null }).dependsOn),
+      }),
+    ) as IthTask[];
   }
 
   // ---- inbox (in-DB mailbox) ------------------------------------------------

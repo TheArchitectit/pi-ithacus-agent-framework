@@ -32,6 +32,10 @@ export interface IthAgent {
   provider: string | null;
   status: AgentStatus;
   lastSeen: number;
+  /** JSON-schema string used to validate a sub-agent's result, or null. */
+  resultSchema: string | null;
+  /** whether the agent's last result passed `resultSchema` validation. */
+  resultValidated: boolean;
 }
 
 export interface IthTask {
@@ -40,6 +44,12 @@ export interface IthTask {
   title: string;
   ownerClaim: string | null;
   status: TaskStatus;
+  /** ids of tasks that must complete before this one (JSON-encoded array in DB). */
+  dependsOn: string[];
+  /** which execution wave (0-indexed) this task belongs to, or null if uncomputed. */
+  wave: number | null;
+  /** named phase grouping for the task, or null. */
+  phase: string | null;
 }
 
 export interface IthInboxMessage {
@@ -49,6 +59,32 @@ export interface IthInboxMessage {
   payload: string;
   ts: number;
   read: boolean;
+}
+
+// ---- Workflow DAG types ------------------------------------------------
+
+/** A unit of work in a team workflow DAG. `dependsOn` lists node ids that
+ *  must complete before this node runs. */
+export interface WorkflowNode {
+  id: string;
+  taskTitle: string;
+  /** optional: which role should handle this node's task. */
+  role?: AgentRole;
+  /** ids of nodes that must complete first. */
+  dependsOn: string[];
+}
+
+/** A directed dependency edge: `from` must complete before `to` runs. */
+export interface WorkflowEdge {
+  from: string;
+  to: string;
+}
+
+/** Result of wave generation: nodes grouped into parallel-execution waves. */
+export interface WaveExecution {
+  /** each wave is a list of node ids that may run in parallel. */
+  waves: string[][];
+  totalWaves: number;
 }
 
 export type MemoryKind = "decision" | "fact" | "preference";
