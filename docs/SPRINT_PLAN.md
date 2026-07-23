@@ -27,13 +27,13 @@
 - 1.8 Schema-validated subagent results
 
 **Deliverables**:
-- [ ] src/store.ts: add dependsOn, wave, phase columns to ith_tasks
-- [ ] src/store.ts: add schema validation columns to ith_agents
-- [ ] src/workflow.ts: DAG engine with topological sort
-- [ ] src/workflow.ts: wave execution (parallel within wave, sequential across)
-- [ ] src/types.ts: WorkflowNode, WorkflowEdge, WaveExecution types
-- [ ] Unit tests for topological sort, cycle detection, wave generation
-- [ ] Guardrails scan passes
+- [x] src/store.ts: add dependsOn, wave, phase columns to ith_tasks
+- [x] src/store.ts: add schema validation columns to ith_agents
+- [x] src/workflow.ts: DAG engine with topological sort
+- [x] src/workflow.ts: wave execution (parallel within wave, sequential across)
+- [x] src/types.ts: WorkflowNode, WorkflowEdge, WaveExecution types
+- [x] Unit tests for topological sort, cycle detection, wave generation
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - DAG correctly identifies execution waves from dependency graph
