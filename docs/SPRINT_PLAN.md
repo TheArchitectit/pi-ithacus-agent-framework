@@ -57,16 +57,16 @@
 - 1.3 Async background runs
 
 **Deliverables**:
-- [ ] src/worktree.ts: git worktree add/remove/list per agent
-- [ ] src/worktree.ts: auto-cleanup on agent completion or failure
-- [ ] extensions/ithacus-worktree.ts: worktree lifecycle hooks
-- [ ] src/async.ts: detach run from session, persist state to SQLite
-- [ ] src/async.ts: spawn detached child process
-- [ ] src/async.ts: notify on completion (store callback)
-- [ ] extensions/ithacus-async.ts: async run spawn/monitor hooks
-- [ ] src/types.ts: WorktreeConfig, AsyncRunState types
-- [ ] Unit tests for worktree creation, cleanup, async spawn
-- [ ] Guardrails scan passes
+- [x] src/worktree.ts: git worktree add/remove/list per agent
+- [x] src/worktree.ts: auto-cleanup on agent completion or failure
+- [x] extensions/ithacus-worktree.ts: worktree lifecycle hooks
+- [x] src/async.ts: detach run from session, persist state to SQLite
+- [x] src/async.ts: spawn detached child process
+- [x] src/async.ts: notify on completion (store callback)
+- [x] extensions/ithacus-async.ts: async run spawn/monitor hooks
+- [x] src/types.ts: WorktreeConfig, AsyncRunState types
+- [x] Unit tests for worktree creation, cleanup, async spawn
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - git worktree add creates isolated directory per agent
