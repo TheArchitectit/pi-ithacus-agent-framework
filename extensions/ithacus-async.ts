@@ -41,7 +41,7 @@ export function checkAsync(
   if (!check.running) {
     const exitInfo = readExitInfo(stored.logPath);
     runtime.store.setAsyncRunStatus(runId, 'completed', {
-      exitCode: exitInfo.exitCode ?? 0,
+      exitCode: exitInfo.exitCode,
       completedAt: Date.now(),
     });
     runtime.appendEvent('async_completed', { runId, exitCode: exitInfo.exitCode });

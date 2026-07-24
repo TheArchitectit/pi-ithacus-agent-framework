@@ -103,7 +103,11 @@ export function checkAsyncRun(pid: number): { running: boolean; exitCode: number
 /** Read the exit info sidecar written by the child exit handler. */
 export function readExitInfo(logPath: string): { exitCode: number | null; signal: string | null } {
   try {
-    return JSON.parse(readFileSync(`${logPath}.exit`, 'utf-8'));
+    const parsed = JSON.parse(readFileSync(`${logPath}.exit`, 'utf-8'));
+    return {
+      exitCode: typeof parsed.exitCode === 'number' ? parsed.exitCode : null,
+      signal: typeof parsed.signal === 'string' ? parsed.signal : null,
+    };
   } catch {
     return { exitCode: null, signal: null };
   }
