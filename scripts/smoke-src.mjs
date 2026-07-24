@@ -7,7 +7,7 @@
 // surgical string replace on `from "..."` / `import("...")` only). Then we
 // import the temp .ts directly, letting Node strip the types.
 
-import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,8 @@ const team = await import(join(buildDir, "team.ts"));
 const par = await import(join(buildDir, "parallel.ts"));
 const trim = await import(join(buildDir, "trim.ts"));
 const wf = await import(join(buildDir, "workflow.ts"));
+const wt = await import(join(buildDir, "worktree.ts"));
+const asc = await import(join(buildDir, "async.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -174,6 +176,80 @@ store3.createTask({ id: "bc1", runId: "runWf", title: "bc", ownerClaim: null, st
 const bc = store3.openTasks("runWf").find((t) => t.id === "bc1");
 check("store backward-compat default dependsOn", Array.isArray(bc.dependsOn) && bc.dependsOn.length === 0);
 store3.close();
+
+// ---- worktree (Sprint 1.2) -----------------------------------------------
+// Use a separate repo for worktree tests to avoid conflicts.
+const wtRepo = mkdtempSync(join(tmpdir(), 'ithacus-wt-'));
+execSync('git init -q && git config user.email t@t.co && git config user.name t && git commit -q --allow-empty -m init', { cwd: wtRepo });
+
+check('worktreePath returns expected path', wt.worktreePath(wtRepo, 'a1').endsWith(join('.pi', 'ithacus', 'worktrees', 'a1')));
+check('worktreeBranch returns ithacus/<agentId>', wt.worktreeBranch('a1') === 'ithacus/a1');
+
+// Add a file to the repo so worktree has content
+writeFileSync(join(wtRepo, 'hello.txt'), 'hello');
+execSync('git add hello.txt && git commit -q -m add-hello', { cwd: wtRepo });
+
+const wtCfg = wt.addWorktree(wtRepo, 'agent-a1');
+check('addWorktree returns WorktreeConfig', wtCfg.agentId === 'agent-a1' && wtCfg.cleaned === false);
+check('addWorktree creates directory', existsSync(join(wtCfg.path, 'hello.txt')));
+check('addWorktree branch is ithacus/agent-a1', wtCfg.branch === 'ithacus/agent-a1');
+
+const listed = wt.listWorktrees(wtRepo);
+check('listWorktrees includes worktree path', listed.some(p => p.includes('agent-a1')));
+
+const cleaned = wt.cleanupWorktree(wtRepo, wtCfg);
+check('cleanupWorktree sets cleaned=true', cleaned.cleaned === true);
+check('cleanupWorktree removes directory', !existsSync(wtCfg.path));
+
+rmSync(wtRepo, { recursive: true, force: true });
+
+// ---- async (Sprint 1.2) --------------------------------------------------
+const asyncStateDir = mkdtempSync(join(tmpdir(), 'ithacus-async-'));
+
+// Spawn a trivial local process that prints and exits
+const asyncState = asc.spawnAsyncRun({
+  runId: 'async-test-1',
+  stateDir: asyncStateDir,
+  command: 'node',
+  args: ['-e', 'console.log("async-hello")'],
+});
+check('spawnAsyncRun returns running state', asyncState.status === 'running');
+check('spawnAsyncRun has pid', asyncState.pid !== null && asyncState.pid > 0);
+check('spawnAsyncRun has logPath', asyncState.logPath.includes('async-test-1'));
+
+// Wait for the process to finish
+await new Promise(r => setTimeout(r, 500));
+
+const checkResult = asc.checkAsyncRun(asyncState.pid);
+check('checkAsyncRun detects process finished', checkResult.running === false);
+
+// Check log file was written
+const logExists = existsSync(asyncState.logPath);
+check('async log file created', logExists);
+if (logExists) {
+  const logContent = readFileSync(asyncState.logPath, 'utf-8');
+  check('async log contains output', logContent.includes('async-hello'));
+}
+
+// Store round-trip for async runs
+const store4 = new IthStore(tmpRepo, cfg.loadConfig());
+store4.saveAsyncRun(asyncState);
+const retrieved = store4.getAsyncRun('async-test-1');
+check('store.getAsyncRun retrieves saved state', retrieved !== undefined && retrieved.runId === 'async-test-1');
+store4.setAsyncRunStatus('async-test-1', 'completed', { exitCode: 0, completedAt: Date.now() });
+const completed = store4.getAsyncRun('async-test-1');
+check('store.setAsyncRunStatus updates status', completed.status === 'completed' && completed.exitCode === 0);
+
+// Worktree store round-trip
+store4.saveWorktree({ agentId: 'wt-agent-1', runId: 'run1', path: '/tmp/wt', branch: 'ithacus/wt-agent-1', cleaned: false, createdAt: 1000 });
+const wtr = store4.getWorktree('wt-agent-1');
+check('store.getWorktree retrieves saved config', wtr !== undefined && wtr.path === '/tmp/wt');
+store4.markWorktreeCleaned('wt-agent-1');
+const wtc = store4.getWorktree('wt-agent-1');
+check('store.markWorktreeCleaned sets cleaned', wtc.cleaned === true);
+store4.close();
+
+rmSync(asyncStateDir, { recursive: true, force: true });
 
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });

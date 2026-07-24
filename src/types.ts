@@ -87,6 +87,41 @@ export interface WaveExecution {
   totalWaves: number;
 }
 
+// ---- Worktree types (Sprint 1.2) ----
+
+/** Configuration for a per-agent git worktree. */
+export interface WorktreeConfig {
+  agentId: string;
+  runId: string;
+  /** absolute path to the worktree directory. */
+  path: string;
+  /** branch name checked out in the worktree. */
+  branch: string;
+  /** whether the worktree has been cleaned up. */
+  cleaned: boolean;
+  createdAt: number;
+}
+
+// ---- Async run types (Sprint 1.2) ----
+
+export type AsyncRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+/** State of a detached background run. */
+export interface AsyncRunState {
+  runId: string;
+  status: AsyncRunStatus;
+  /** pid of the detached child process, or null if not yet spawned. */
+  pid: number | null;
+  /** absolute path to the log file for the child's stdout/stderr. */
+  logPath: string;
+  /** exit code if completed, else null. */
+  exitCode: number | null;
+  startedAt: number;
+  completedAt: number | null;
+  /** error message if failed, else null. */
+  error: string | null;
+}
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {

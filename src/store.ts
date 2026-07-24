@@ -25,6 +25,9 @@ import type {
   IthInboxMessage,
   IthMemory,
   MemoryKind,
+  WorktreeConfig,
+  AsyncRunState,
+  AsyncRunStatus,
 } from "./types.js";
 
 /** Parse a JSON-encoded dependsOn array from a DB row (defaults to []). */
@@ -89,6 +92,26 @@ CREATE INDEX IF NOT EXISTS ix_ith_agents_run ON ith_agents(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_tasks_run ON ith_tasks(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_inbox_agent ON ith_inbox(agentId, read);
 CREATE INDEX IF NOT EXISTS ix_ith_mem_repo ON ith_memories(repoId, kind);
+CREATE TABLE IF NOT EXISTS ith_worktrees (
+  agentId   TEXT PRIMARY KEY,
+  runId     TEXT NOT NULL,
+  path      TEXT NOT NULL,
+  branch    TEXT NOT NULL,
+  cleaned   INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ith_async_runs (
+  runId       TEXT PRIMARY KEY,
+  status      TEXT NOT NULL,
+  pid         INTEGER,
+  logPath     TEXT NOT NULL,
+  exitCode    INTEGER,
+  startedAt   INTEGER NOT NULL,
+  completedAt INTEGER,
+  error       TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ith_worktrees_run ON ith_worktrees(runId);
+CREATE INDEX IF NOT EXISTS ix_ith_async_status ON ith_async_runs(status);
 `;
 
 export class IthStore {
@@ -251,6 +274,69 @@ export class IthStore {
       : `SELECT * FROM ith_memories WHERE repoId = ? ORDER BY ts DESC LIMIT ?`;
     const args = kind ? [repoId, kind, limit] : [repoId, limit];
     return this.db.prepare(sql).all(...args) as IthMemory[];
+  }
+
+  // ---- worktrees (Sprint 1.2) -----------------------------------------------
+  saveWorktree(w: WorktreeConfig): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_worktrees (agentId, runId, path, branch, cleaned, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(w.agentId, w.runId, w.path, w.branch, w.cleaned ? 1 : 0, w.createdAt);
+  }
+  getWorktree(agentId: string): WorktreeConfig | undefined {
+    const row = this.db.prepare(`SELECT * FROM ith_worktrees WHERE agentId = ?`).get(agentId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return undefined;
+    return {
+      agentId: String(row.agentId),
+      runId: String(row.runId),
+      path: String(row.path),
+      branch: String(row.branch),
+      cleaned: Boolean(row.cleaned),
+      createdAt: Number(row.createdAt),
+    };
+  }
+  worktreesForRun(runId: string): WorktreeConfig[] {
+    return (this.db.prepare(`SELECT * FROM ith_worktrees WHERE runId = ?`).all(runId) as Array<Record<string, unknown>>).map(
+      (row): WorktreeConfig => ({
+        agentId: String(row.agentId),
+        runId: String(row.runId),
+        path: String(row.path),
+        branch: String(row.branch),
+        cleaned: Boolean(row.cleaned),
+        createdAt: Number(row.createdAt),
+      }),
+    );
+  }
+  markWorktreeCleaned(agentId: string): void {
+    this.db.prepare(`UPDATE ith_worktrees SET cleaned = 1 WHERE agentId = ?`).run(agentId);
+  }
+
+  // ---- async runs (Sprint 1.2) ----------------------------------------------
+  saveAsyncRun(a: AsyncRunState): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_async_runs (runId, status, pid, logPath, exitCode, startedAt, completedAt, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(a.runId, a.status, a.pid ?? null, a.logPath, a.exitCode ?? null, a.startedAt, a.completedAt ?? null, a.error ?? null);
+  }
+  getAsyncRun(runId: string): AsyncRunState | undefined {
+    return this.db.prepare(`SELECT * FROM ith_async_runs WHERE runId = ?`).get(runId) as
+      | AsyncRunState
+      | undefined;
+  }
+  asyncRunsByStatus(status: AsyncRunStatus): AsyncRunState[] {
+    return this.db.prepare(`SELECT * FROM ith_async_runs WHERE status = ?`).all(status) as AsyncRunState[];
+  }
+  setAsyncRunStatus(runId: string, status: AsyncRunStatus, opts?: { pid?: number; exitCode?: number; completedAt?: number; error?: string }): void {
+    const parts: string[] = [`status = ?`];
+    const args: unknown[] = [status];
+    if (opts?.pid !== undefined) { parts.push(`pid = ?`); args.push(opts.pid); }
+    if (opts?.exitCode !== undefined) { parts.push(`exitCode = ?`); args.push(opts.exitCode); }
+    if (opts?.completedAt !== undefined) { parts.push(`completedAt = ?`); args.push(opts.completedAt); }
+    if (opts?.error !== undefined) { parts.push(`error = ?`); args.push(opts.error); }
+    args.push(runId);
+    this.db.prepare(`UPDATE ith_async_runs SET ${parts.join(', ')} WHERE runId = ?`).run(...args);
   }
 
   close(): void {
