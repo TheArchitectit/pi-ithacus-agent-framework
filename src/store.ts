@@ -1,13 +1,4 @@
-/**
- * store.ts — opens the project's single local node:sqlite store and provides
- * idempotent schema setup + row helpers for the ithacus tables.
- *
- * The store lives at `<repo>/.pi/ithacus/sqlite.db` (the folder that is the
- * project name). One synchronous DatabaseSync handle is the source of truth —
- * no second process, no remote DB (PREVENT-ITH-004: zero network at runtime).
- *
- * pi-agnostic: depends only on node built-ins + node:sqlite. Unit-testable.
- */
+/** store.ts — local node:sqlite store for ithacus. Zero network (PREVENT-ITH-004). */
 
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
@@ -30,86 +21,24 @@ import type {
   AsyncRunStatus,
 } from "./types.js";
 
-/** Parse a JSON-encoded dependsOn array from a DB row (defaults to []). */
 function parseDependsOn(raw: string | null | undefined): string[] {
   if (!raw) return [];
-  try {
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.map(String) : [];
-  } catch {
-    return [];
-  }
+  try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr.map(String) : []; }
+  catch { return []; }
 }
 
-// Columns are camelCase so node:sqlite rows map directly onto the TS types in
-// types.ts (node:sqlite preserves column names verbatim — it does NOT camelCase
-// them). This avoids a snake_case/camelCase mismatch in every row read.
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS ith_runs (
-  runId      TEXT PRIMARY KEY,
-  modePreset TEXT NOT NULL,
-  createdAt  INTEGER NOT NULL,
-  summary    TEXT NOT NULL,
-  status     TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS ith_agents (
-  id              TEXT PRIMARY KEY,
-  runId           TEXT NOT NULL,
-  role            TEXT NOT NULL,
-  model           TEXT NOT NULL,
-  provider        TEXT,
-  status          TEXT NOT NULL,
-  lastSeen        INTEGER NOT NULL,
-  resultSchema    TEXT,
-  resultValidated INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS ith_tasks (
-  id         TEXT PRIMARY KEY,
-  runId      TEXT NOT NULL,
-  title      TEXT NOT NULL,
-  ownerClaim TEXT,
-  status     TEXT NOT NULL,
-  dependsOn  TEXT NOT NULL DEFAULT '[]',
-  wave       INTEGER,
-  phase      TEXT
-);
-CREATE TABLE IF NOT EXISTS ith_inbox (
-  id         TEXT PRIMARY KEY,
-  agentId    TEXT NOT NULL,
-  fromAgent  TEXT,
-  payload    TEXT NOT NULL,
-  ts         INTEGER NOT NULL,
-  read       INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS ith_memories (
-  id      TEXT PRIMARY KEY,
-  kind    TEXT NOT NULL,
-  text    TEXT NOT NULL,
-  repoId  TEXT NOT NULL,
-  ts      INTEGER NOT NULL
-);
+CREATE TABLE IF NOT EXISTS ith_runs (runId TEXT PRIMARY KEY, modePreset TEXT NOT NULL, createdAt INTEGER NOT NULL, summary TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ith_agents (id TEXT PRIMARY KEY, runId TEXT NOT NULL, role TEXT NOT NULL, model TEXT NOT NULL, provider TEXT, status TEXT NOT NULL, lastSeen INTEGER NOT NULL, resultSchema TEXT, resultValidated INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS ith_tasks (id TEXT PRIMARY KEY, runId TEXT NOT NULL, title TEXT NOT NULL, ownerClaim TEXT, status TEXT NOT NULL, dependsOn TEXT NOT NULL DEFAULT '[]', wave INTEGER, phase TEXT);
+CREATE TABLE IF NOT EXISTS ith_inbox (id TEXT PRIMARY KEY, agentId TEXT NOT NULL, fromAgent TEXT, payload TEXT NOT NULL, ts INTEGER NOT NULL, read INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS ith_memories (id TEXT PRIMARY KEY, kind TEXT NOT NULL, text TEXT NOT NULL, repoId TEXT NOT NULL, ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS ith_worktrees (agentId TEXT PRIMARY KEY, runId TEXT NOT NULL, path TEXT NOT NULL, branch TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS ith_async_runs (runId TEXT PRIMARY KEY, status TEXT NOT NULL, pid INTEGER, logPath TEXT NOT NULL, exitCode INTEGER, startedAt INTEGER NOT NULL, completedAt INTEGER, error TEXT);
 CREATE INDEX IF NOT EXISTS ix_ith_agents_run ON ith_agents(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_tasks_run ON ith_tasks(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_inbox_agent ON ith_inbox(agentId, read);
 CREATE INDEX IF NOT EXISTS ix_ith_mem_repo ON ith_memories(repoId, kind);
-CREATE TABLE IF NOT EXISTS ith_worktrees (
-  agentId   TEXT PRIMARY KEY,
-  runId     TEXT NOT NULL,
-  path      TEXT NOT NULL,
-  branch    TEXT NOT NULL,
-  cleaned   INTEGER NOT NULL DEFAULT 0,
-  createdAt INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS ith_async_runs (
-  runId       TEXT PRIMARY KEY,
-  status      TEXT NOT NULL,
-  pid         INTEGER,
-  logPath     TEXT NOT NULL,
-  exitCode    INTEGER,
-  startedAt   INTEGER NOT NULL,
-  completedAt INTEGER,
-  error       TEXT
-);
 CREATE INDEX IF NOT EXISTS ix_ith_worktrees_run ON ith_worktrees(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_async_status ON ith_async_runs(status);
 `;
@@ -126,13 +55,7 @@ export class IthStore {
     this.migrateSchema();
   }
 
-  /**
-   * Backward-compatible migration: add columns that may be absent on an
-   * existing DB (CREATE TABLE IF NOT EXISTS won't add columns to a table that
-   * already exists). Each ALTER is idempotent — wrapped in try/catch so a
-   * re-run on an already-migrated DB is a no-op. node:sqlite lacks
-   * `ADD COLUMN IF NOT EXISTS`, so we guard via PRAGMA table_info.
-   */
+  /** Backward-compat migration: add columns absent on existing DB. Idempotent. */
   migrateSchema(): void {
     const cols = (table: string): Set<string> =>
       new Set(
@@ -163,7 +86,6 @@ export class IthStore {
     }
   }
 
-  // ---- runs -----------------------------------------------------------------
   createRun(run: IthRun): void {
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_runs (runId, modePreset, createdAt, summary, status)
@@ -179,7 +101,6 @@ export class IthStore {
       | undefined;
   }
 
-  // ---- agents ---------------------------------------------------------------
   upsertAgent(a: IthAgent): void {
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_agents
@@ -206,7 +127,6 @@ export class IthStore {
     ) as IthAgent[];
   }
 
-  // ---- tasks (TaskClaim-style dedupe) --------------------------------------
   createTask(t: IthTask): void {
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_tasks
@@ -246,7 +166,6 @@ export class IthStore {
     ) as IthTask[];
   }
 
-  // ---- inbox (in-DB mailbox) ------------------------------------------------
   sendMessage(m: IthInboxMessage): void {
     this.db.prepare(
       `INSERT INTO ith_inbox (id, agentId, fromAgent, payload, ts, read)
@@ -260,7 +179,6 @@ export class IthStore {
     this.db.prepare(`UPDATE ith_inbox SET read = 1 WHERE id = ?`).run(id);
   }
 
-  // ---- memories -------------------------------------------------------------
   addMemory(m: IthMemory): void {
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_memories (id, kind, text, repoId, ts)
@@ -276,7 +194,6 @@ export class IthStore {
     return this.db.prepare(sql).all(...args) as IthMemory[];
   }
 
-  // ---- worktrees (Sprint 1.2) -----------------------------------------------
   saveWorktree(w: WorktreeConfig): void {
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_worktrees (agentId, runId, path, branch, cleaned, createdAt)
@@ -313,7 +230,6 @@ export class IthStore {
     this.db.prepare(`UPDATE ith_worktrees SET cleaned = 1 WHERE agentId = ?`).run(agentId);
   }
 
-  // ---- async runs (Sprint 1.2) ----------------------------------------------
   saveAsyncRun(a: AsyncRunState): void {
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_async_runs (runId, status, pid, logPath, exitCode, startedAt, completedAt, error)

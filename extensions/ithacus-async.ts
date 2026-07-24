@@ -5,7 +5,7 @@
  */
 
 import type { IthRuntime } from './ithacus-runtime.js';
-import { spawnAsyncRun, checkAsyncRun } from '../src/async.js';
+import { spawnAsyncRun, checkAsyncRun, readExitInfo } from '../src/async.js';
 import type { AsyncRunState } from '../src/types.js';
 
 /** Spawn an async background run and persist its state. */
@@ -39,11 +39,12 @@ export function checkAsync(
 
   const check = checkAsyncRun(stored.pid);
   if (!check.running) {
+    const exitInfo = readExitInfo(stored.logPath);
     runtime.store.setAsyncRunStatus(runId, 'completed', {
-      exitCode: 0,
+      exitCode: exitInfo.exitCode ?? 0,
       completedAt: Date.now(),
     });
-    runtime.appendEvent('async_completed', { runId });
+    runtime.appendEvent('async_completed', { runId, exitCode: exitInfo.exitCode });
     return runtime.store.getAsyncRun(runId);
   }
   return stored;

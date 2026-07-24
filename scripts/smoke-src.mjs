@@ -231,6 +231,11 @@ if (logExists) {
   check('async log contains output', logContent.includes('async-hello'));
 }
 
+// ReadExitInfo — reads exit code sidecar written by child exit handler
+const exitInfo = asc.readExitInfo(asyncState.logPath);
+check('readExitInfo returns exit code', exitInfo.exitCode === 0);
+check('readExitInfo returns null signal for normal exit', exitInfo.signal === null);
+
 // Store round-trip for async runs
 const store4 = new IthStore(tmpRepo, cfg.loadConfig());
 store4.saveAsyncRun(asyncState);

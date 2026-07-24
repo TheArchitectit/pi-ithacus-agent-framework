@@ -10,7 +10,7 @@
  */
 
 import { spawn } from 'node:child_process'; // guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: local detached process
-import { mkdirSync, appendFileSync } from 'node:fs';
+import { mkdirSync, appendFileSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AsyncRunState } from './types.js';
 
@@ -54,6 +54,13 @@ export function spawnAsyncRun(opts: {
       appendFileSync(log, d, logStream);
     });
 
+    // Capture exit code via sidecar file (child is detached+unref'd).
+    child.on('exit', (code, signal) => {
+      try {
+        writeFileSync(`${log}.exit`, JSON.stringify({ exitCode: code, signal }));
+      } catch { /* non-fatal */ }
+    });
+
     child.unref();
 
     return {
@@ -93,17 +100,21 @@ export function checkAsyncRun(pid: number): { running: boolean; exitCode: number
   }
 }
 
-/**
- * Reap a completed async run. Checks if the process is still alive; if dead,
- * returns completion info. For simplicity, we just check liveness.
- */
-export function reapAsyncRun(
-  runId: string,
-  pid: number,
-): { exitCode: number; signal: string | null } {
-  const check = checkAsyncRun(pid);
-  if (check.running) {
-    return { exitCode: -1, signal: null };
+/** Read the exit info sidecar written by the child exit handler. */
+export function readExitInfo(logPath: string): { exitCode: number | null; signal: string | null } {
+  try {
+    return JSON.parse(readFileSync(`${logPath}.exit`, 'utf-8'));
+  } catch {
+    return { exitCode: null, signal: null };
   }
-  return { exitCode: 0, signal: null };
+}
+
+/** Reap a completed async run — reads exit info from sidecar file. */
+export function reapAsyncRun(
+  logPath: string,
+  pid: number,
+): { exitCode: number | null; signal: string | null } {
+  const check = checkAsyncRun(pid);
+  if (check.running) return { exitCode: -1, signal: null };
+  return readExitInfo(logPath);
 }

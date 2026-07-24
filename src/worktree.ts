@@ -7,7 +7,7 @@
  * pi-agnostic: uses only local git CLI + node:fs + node:path.
  */
 
-import { execSync } from 'node:child_process'; // guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: local git CLI only
+import { execFileSync } from 'node:child_process'; // guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: local git CLI only
 import { existsSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WorktreeConfig } from './types.js';
@@ -36,7 +36,7 @@ export function addWorktree(
   const path = worktreePath(repoRoot, agentId);
   const branch = worktreeBranch(agentId);
   const base = baseBranch ?? 'HEAD';
-  execSync(`git worktree add -b ${branch} ${path} ${base}`, {
+  execFileSync('git', ['worktree', 'add', '-b', branch, path, base], {
     cwd: repoRoot,
     stdio: ['ignore', 'pipe', 'ignore'],
   });
@@ -46,7 +46,7 @@ export function addWorktree(
 /** Remove a git worktree directory. */
 export function removeWorktree(repoRoot: string, path: string): void {
   try {
-    execSync(`git worktree remove --force ${path}`, {
+    execFileSync('git', ['worktree', 'remove', '--force', path], {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -61,11 +61,11 @@ export function removeWorktree(repoRoot: string, path: string): void {
 /** List all git worktrees for the repo (returns paths). */
 export function listWorktrees(repoRoot: string): string[] {
   try {
-    const out = execSync('git worktree list --porcelain', {
+    const out = execFileSync('git', ['worktree', 'list', '--porcelain'], {
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    }) as string;
     const paths: string[] = [];
     for (const line of out.split('\n')) {
       if (line.startsWith('worktree ')) {
@@ -105,8 +105,11 @@ export function sweepOrphans(repoRoot: string): string[] {
       if (!entry.isDirectory()) continue;
       const full = join(wtDir, entry.name);
       if (!listed.has(full)) {
-        rmSync(full, { recursive: true, force: true });
-        removed.push(full);
+        // Safety: only delete dirs that look like real worktrees (have .git file).
+        if (existsSync(join(full, '.git'))) {
+          rmSync(full, { recursive: true, force: true });
+          removed.push(full);
+        }
       }
     }
   } catch {
