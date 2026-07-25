@@ -50,6 +50,10 @@ const { HindsightStore } = await import(join(buildDir, "store-hindsight.ts"));
 const hindsight = await import(join(buildDir, "hindsight.ts"));
 const search = await import(join(buildDir, "search.ts"));
 const schemes = await import(join(buildDir, "schemes.ts"));
+const { EventsStore } = await import(join(buildDir, "store-events.ts"));
+const definitions = await import(join(buildDir, "definitions.ts"));
+const metrics = await import(join(buildDir, "metrics.ts"));
+const pluginsMod = await import(join(buildDir, "plugins.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -1042,6 +1046,196 @@ check('resolveScheme unknown throws', schemeThrew);
 
 const prResWhitespace = schemes.resolveScheme('  pr://789  ');
 check('resolveScheme trims whitespace', prResWhitespace.ref === '789');
+
+// ---- store-events (Sprint 3.2) -----------------------------------------
+const storeE = new IthStore(tmpRepo, cfg.loadConfig());
+const eStore = new EventsStore(storeE.db);
+
+eStore.append({ id: 'e1', runId: 'r1', agentId: 'a1', action: 'spawned', metadata: { role: 'explorer' }, ts: 1000 });
+eStore.append({ id: 'e2', runId: 'r1', agentId: 'a1', action: 'tool_call', metadata: { tool: 'rg' }, ts: 2000 });
+eStore.append({ id: 'e3', runId: 'r1', agentId: 'a2', action: 'spawned', metadata: { role: 'planner' }, ts: 3000 });
+eStore.append({ id: 'e4', runId: 'r2', agentId: 'a3', action: 'spawned', metadata: {}, ts: 4000 });
+
+check('EventsStore.append persists', eStore.query({ runId: 'r1' }).length === 3);
+check('EventsStore.query by agent', eStore.query({ agentId: 'a1' }).length === 2);
+check('EventsStore.query by action', eStore.query({ action: 'spawned' }).length === 3);
+check('EventsStore.query ordered by ts', eStore.query({ runId: 'r1' })[0].id === 'e1');
+check('EventsStore.query limit', eStore.query({ runId: 'r1', limit: 2 }).length === 2);
+check('EventsStore.count', eStore.count({ runId: 'r1' }) === 3);
+check('EventsStore.count by action', eStore.count({ action: 'spawned' }) === 3);
+check('EventsStore.metadata parsed', eStore.query({ runId: 'r1' })[0].metadata.role === 'explorer');
+check('EventsStore empty metadata', eStore.query({ runId: 'r2' })[0].metadata !== undefined);
+
+eStore.clearRun('r1');
+check('EventsStore.clearRun', eStore.query({ runId: 'r1' }).length === 0);
+
+storeE.close();
+
+// ---- definitions (Sprint 3.2) -----------------------------------------
+const agentMd = `---\nname: Code Reviewer\nrole: reviewer\nmodel: claude-sonnet\ntools:\n  - rg\n  - read\ntriggers:\n  - review\n  - audit\n---\nYou are a code reviewer. Check for bugs and security issues.`;
+const agentDef = definitions.parseAgentDefinition(agentMd, '/agents/reviewer.md', 'project');
+check('parseAgentDefinition name', agentDef?.name === 'Code Reviewer');
+check('parseAgentDefinition role', agentDef?.role === 'reviewer');
+check('parseAgentDefinition model', agentDef?.model === 'claude-sonnet');
+check('parseAgentDefinition id slug', agentDef?.id === 'code-reviewer');
+check('parseAgentDefinition tools', JSON.stringify(agentDef?.tools) === JSON.stringify(['rg', 'read']));
+check('parseAgentDefinition triggers', agentDef?.triggers.includes('review'));
+check('parseAgentDefinition body', agentDef?.systemPrompt.includes('code reviewer'));
+check('parseAgentDefinition layer', agentDef?.layer === 'project');
+
+const agentNoFm = definitions.parseAgentDefinition('Just a plain agent with instructions.', '/agents/plain.md', 'user');
+check('parseAgentDefinition no frontmatter uses body', agentNoFm?.systemPrompt.includes('plain agent'));
+
+const emptyAgent = definitions.parseAgentDefinition('', '/agents/empty.md', 'builtin');
+check('parseAgentDefinition empty returns null', emptyAgent === null);
+
+const teamMd = `---\nname: Review Team\nworkflow: review\nagents:\n  - explorer:explorer\n  - reviewer:code-reviewer\n---\nTeam config.`;
+const teamDef = definitions.parseTeamDefinition(teamMd, '/teams/review.md', 'project');
+check('parseTeamDefinition name', teamDef?.name === 'Review Team');
+check('parseTeamDefinition workflow', teamDef?.workflow === 'review');
+check('parseTeamDefinition agents count', teamDef?.agents.length === 2);
+check('parseTeamDefinition agent role', teamDef?.agents[0].role === 'explorer');
+check('parseTeamDefinition agentId', teamDef?.agents[1].agentId === 'code-reviewer');
+
+const emptyTeam = definitions.parseTeamDefinition('---\nname: x\n---\nbody', '/teams/x.md', 'builtin');
+check('parseTeamDefinition no agents returns null', emptyTeam === null);
+
+// 3-layer discovery
+const defDir = mkdtempSync(join(tmpdir(), 'ithacus-defs-'));
+mkdirSync(join(defDir, 'project'), { recursive: true });
+writeFileSync(join(defDir, 'project', 'custom.md'), agentMd);
+mkdirSync(join(defDir, 'ext'), { recursive: true });
+writeFileSync(join(defDir, 'ext', 'base.md'), '---\nname: Base\nrole: executor\n---\nBase agent.');
+
+const discovered = definitions.discoverAgentDefinitions({
+  builtinDir: join(defDir, 'ext'),
+  projectDir: join(defDir, 'project'),
+});
+check('discoverAgentDefinitions 2 agents', discovered.length === 2);
+check('discoverAgentDefinitions finds custom', discovered.some(d => d.name === 'Code Reviewer'));
+
+const teamDiscovered = definitions.discoverTeamDefinitions({
+  builtinDir: join(defDir, 'ext'),
+  projectDir: join(defDir, 'project'),
+});
+check('discoverTeamDefinitions handles no teams dir', teamDiscovered.length === 0);
+
+check('validateAgentDefinition valid', definitions.validateAgentDefinition(agentDef) === null);
+check('validateAgentDefinition missing name', definitions.validateAgentDefinition({ ...agentDef, name: '' })?.includes('name'));
+
+rmSync(defDir, { recursive: true, force: true });
+
+// ---- metrics (Sprint 3.2) ----------------------------------------------
+const metricsReg = metrics.createMetricsRegistry();
+metricsReg.inc('tasks_completed');
+metricsReg.inc('tasks_completed');
+metricsReg.inc('tasks_completed', 5);
+check('metrics.inc counter', metricsReg.getCounter('tasks_completed') === 7);
+metricsReg.inc('errors', 1, { type: 'timeout' });
+metricsReg.inc('errors', 1, { type: 'timeout' });
+metricsReg.inc('errors', 1, { type: 'crash' });
+check('metrics.inc with labels', metricsReg.getCounter('errors', { type: 'timeout' }) === 2);
+check('metrics.inc labels separate', metricsReg.getCounter('errors', { type: 'crash' }) === 1);
+
+metricsReg.set('active_agents', 3);
+metricsReg.set('active_agents', 5);
+check('metrics.set gauge', metricsReg.getGauge('active_agents') === 5);
+
+metricsReg.observe('task_duration_ms', 150);
+metricsReg.observe('task_duration_ms', 300);
+metricsReg.observe('task_duration_ms', 50);
+check('metrics.observe histogram', metricsReg.getHistogram('task_duration_ms').length === 3);
+
+// task helpers
+metricsReg.recordDuration('task-1', 250);
+metricsReg.recordTokens('task-1', 1000);
+check('metrics.recordDuration', metricsReg.getHistogram('ithacus_task_duration_ms', { taskId: 'task-1' }).includes(250));
+check('metrics.recordTokens', metricsReg.getCounter('ithacus_task_tokens_total', { taskId: 'task-1' }) === 1000);
+
+metricsReg.trackTask('task-2', 500, 2000);
+check('metrics.trackTask duration', metricsReg.getHistogram('ithacus_task_duration_ms', { taskId: 'task-2' }).includes(500));
+check('metrics.trackTask tokens', metricsReg.getCounter('ithacus_task_tokens_total', { taskId: 'task-2' }) === 2000);
+
+// Prometheus export
+const prom = metricsReg.toPrometheus();
+check('metrics.toPrometheus has TYPE', prom.includes('# TYPE tasks_completed counter'));
+check('metrics.toPrometheus has value', prom.includes('tasks_completed 7'));
+check('metrics.toPrometheus has gauge', prom.includes('# TYPE active_agents gauge'));
+check('metrics.toPrometheus has histogram', prom.includes('# TYPE ithacus_task_duration_ms histogram'));
+check('metrics.toPrometheus has bucket', prom.includes('ithacus_task_duration_ms_bucket{le="0.005"'));
+check('metrics.toPrometheus has +Inf', prom.includes('le="+Inf"'));
+check('metrics.toPrometheus labels', prom.includes('type="timeout"'));
+
+// OTLP export
+const otlp = metricsReg.toOTLP();
+check('metrics.toOTLP is JSON', (() => { try { JSON.parse(otlp); return true; } catch { return false; } })());
+check('metrics.toOTLP has service name', otlp.includes('ithacus'));
+check('metrics.toOTLP has counter', otlp.includes('tasks_completed'));
+check('metrics.toOTLP has gauge', otlp.includes('active_agents'));
+
+metricsReg.clear();
+check('metrics.clear empties', metricsReg.allPoints().length === 0);
+
+// ---- trim preserveHeadTail (Sprint 3.2) --------------------------------
+const trimMessages = [
+  { content: 'intro text' },
+  { content: '## Heading\nbody' }, // complete heading
+  { content: 'plain paragraph' },
+  { content: '```js\nconst x = 1;\n```' }, // closed fence
+];
+// No boundary conflict: headings and fences are complete within messages.
+check('trim.detectBoundaryConflict clean', trim.detectBoundaryConflict(trimMessages, 1, 3) === false);
+check('trim.preserveHeadTail no conflict', trim.preserveHeadTail(trimMessages, 1, 3).preserve === false);
+
+// Unclosed fence: single backtick block with no closing
+const unclosedFence = [{ content: '```js\nconst x = 1;' }];
+check('trim.detectBoundaryConflict unclosed fence', trim.detectBoundaryConflict(unclosedFence, 0, 1) === true);
+check('trim.preserveHeadTail fence conflict', trim.preserveHeadTail(unclosedFence, 0, 1).preserve === true);
+
+// Heading line alone (starts with #, no newline → orphaned)
+const orphanedHeading = [{ content: '## Orphaned Heading' }];
+check('trim.detectBoundaryConflict orphaned heading', trim.detectBoundaryConflict(orphanedHeading, 0, 1) === true);
+
+// Closed fence (``` start and ``` end within message)
+const closedFence = [{ content: '```js\ncode\n```\nmore text' }];
+check('trim.detectBoundaryConflict closed fence', trim.detectBoundaryConflict(closedFence, 0, 1) === false);
+
+// ---- plugins (Sprint 3.2) ---------------------------------------------
+const plugReg = pluginsMod.createPluginRegistry();
+const testPlugin = {
+  id: 'context-injector',
+  name: 'Context Injector',
+  hooks: ['preSpawn', 'postSpawn'],
+  injectContext: ({ agentId }) => `[plugin] Context for ${agentId}`,
+};
+plugReg.register(testPlugin);
+check('plugins.list', plugReg.list().length === 1);
+check('plugins.forHook preSpawn', plugReg.forHook('preSpawn').length === 1);
+check('plugins.forHook postSpawn', plugReg.forHook('postSpawn').length === 1);
+check('plugins.forHook empty', plugReg.forHook('onTurnEnd').length === 0);
+
+const injected = plugReg.injectContext('preSpawn', { agentId: 'a1', runId: 'r1' });
+check('plugins.injectContext returns text', injected.includes('Context for a1'));
+
+const spawnCtx = plugReg.onAgentSpawn('a2', 'r1');
+check('plugins.onAgentSpawn', spawnCtx.includes('Context for a2'));
+
+// empty hook
+const emptyPlug = pluginsMod.createPluginRegistry();
+check('plugins.injectContext empty', emptyPlug.injectContext('preSpawn', { agentId: 'x', runId: 'y' }) === '');
+
+// unregister
+plugReg.unregister('context-injector');
+check('plugins.unregister', plugReg.list().length === 0);
+check('plugins.unregister removes from hooks', plugReg.forHook('preSpawn').length === 0);
+
+// plugin without injectContext
+const noInjectPlugin = { id: 'no-inject', name: 'NoInject', hooks: ['preSpawn'] };
+plugReg.register(noInjectPlugin);
+check('plugins.no injectContext empty', plugReg.injectContext('preSpawn', { agentId: 'z', runId: 'r' }) === '');
+
+plugReg.clear();
+check('plugins.clear', plugReg.list().length === 0);
 
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });

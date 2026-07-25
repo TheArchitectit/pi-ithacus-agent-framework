@@ -277,6 +277,9 @@ export type { Priority, AdvisorNote, ReviewVerdict, ReviewFinding, AtomicCommit 
 // ---- Memory + Search + Schemes (Sprint 3.1) — split out ----
 export type { RelevanceScore, HindsightEntry, SearchResult, SchemeResolution } from './types-sprint-3.1.js';
 
+// ---- Activity Feed + Definitions + Metrics + Plugins (Sprint 3.2) — split out ----
+export type { ActivityEvent, AgentDefinition, TeamDefinition, MetricPoint, PluginHook, Plugin } from './types-sprint-3.2.js';
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {

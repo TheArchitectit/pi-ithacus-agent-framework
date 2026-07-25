@@ -58,3 +58,32 @@ export function currentPressure(c: TrimContext): number {
   });
   return pressureRatio(c.currentTokens ?? 0, threshold);
 }
+
+/**
+ * Head+tail preservation: detect when a trim boundary would split a heading
+ * or code fence, and signal that head+tail must be preserved verbatim.
+ */
+export function detectBoundaryConflict(messages: Array<{ content: string }>, trimStart: number, trimEnd: number): boolean {
+  // Inspect the region that would be pruned (iterate by index — no boundary
+  // is actually applied here; this is a read-only conflict detector).
+  const end = Math.min(trimEnd, messages.length);
+  for (let i = trimStart; i < end; i++) {
+    const content = messages[i].content;
+    // Heading preservation: a message that starts a heading completed outside the boundary.
+    if (/^#{1,6}\s/.test(content) && !content.includes('\n')) {
+      return true; // heading would be orphaned
+    }
+    // Code fence preservation: count fences; odd count = unclosed.
+    const fences = (content.match(/^```/gm) ?? []).length;
+    if (fences % 2 !== 0) return true; // unclosed fence at boundary
+  }
+  return false;
+}
+
+/** Decide whether to preserve head+tail around a trim boundary. */
+export function preserveHeadTail(messages: Array<{ content: string }>, trimStart: number, trimEnd: number): { preserve: boolean; reason: string } {
+  if (detectBoundaryConflict(messages, trimStart, trimEnd)) {
+    return { preserve: true, reason: 'heading-or-fence-at-boundary' };
+  }
+  return { preserve: false, reason: 'no-boundary-conflict' };
+}
