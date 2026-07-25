@@ -220,6 +220,54 @@ export interface ValidationReport {
   summary: string;
 }
 
+// ---- Hashline + Checkpoint types (Sprint 2.1) ----
+
+/** A content-hash anchored edit. The anchorHash pins the edit to a known-good
+ *  state of the file; if the hash mismatches (stale anchor), the applier falls
+ *  back to nearest-match recovery instead of failing. */
+export interface HashlineEdit {
+  filePath: string;
+  /** SHA-256 hash (hex) of the exact `oldText` the edit targets. */
+  anchorHash: string;
+  /** The text to find and replace. Empty for a pure insertion. */
+  oldText: string;
+  /** The replacement text. Empty for a pure deletion. */
+  newText: string;
+  /** 1-based line number hint for stale-anchor recovery (optional). */
+  anchorLine?: number;
+}
+
+/** Pi's native Edit-tool shape (mirrored here so src/ stays pi-agnostic). */
+export interface NativeEdit {
+  filePath: string;
+  oldString: string;
+  newString: string;
+}
+
+/** A checkpoint marker inserted into a conversation to bound pruning. */
+export interface Checkpoint {
+  id: string;
+  runId: string;
+  /** 0-indexed turn position in the conversation when the checkpoint was set. */
+  turnIndex: number;
+  /** Concise summary of the pruned exploratory context. */
+  summary: string;
+  /** Token count before pruning (estimated). */
+  tokenCountBefore: number;
+  /** Token count after pruning (estimated). */
+  tokenCountAfter: number;
+  createdAt: number;
+}
+
+/** Concise summary report produced after pruning. */
+export interface CheckpointSummary {
+  checkpointId: string;
+  prunedMessageCount: number;
+  tokensSaved: number;
+  /** Bullet-list summary string preserved in the trimmed context. */
+  summary: string;
+}
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {

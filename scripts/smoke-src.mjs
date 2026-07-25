@@ -39,6 +39,8 @@ const cost = await import(join(buildDir, "cost.ts"));
 const { ModelProfileStore } = await import(join(buildDir, "store-model-profiles.ts"));
 const profiles = await import(join(buildDir, "model-profiles.ts"));
 const validator = await import(join(buildDir, "validator.ts"));
+const hashline = await import(join(buildDir, "hashline.ts"));
+const checkpoint = await import(join(buildDir, "checkpoint.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -476,6 +478,139 @@ const mildDanger = validator.validatePrompt('quietly rm -rf something', { safety
 check('validatePrompt custom safety threshold', typeof mildDanger.safetyBlocked === 'boolean');
 
 store6.close();
+
+// ---- hashline (Sprint 2.1) ----------------------------------------------
+const sampleContent = 'function add(a, b) {\n  return a + b;\n}\n\nfunction sub(a, b) {\n  return a - b;\n}\n';
+
+// hash computation
+const h = hashline.computeHash('hello');
+check('computeHash returns 64-char hex', /^[0-9a-f]{64}$/.test(h));
+check('computeHash deterministic', hashline.computeHash('hello') === h);
+check('computeHash differs on input', hashline.computeHash('world') !== h);
+
+// build + serialize + parse roundtrip
+const edit = hashline.buildHashline('/src/math.ts', 'return a + b;', 'return Number(a) + Number(b);');
+check('buildHashline sets filePath', edit.filePath === '/src/math.ts');
+check('buildHashline sets anchorHash', edit.anchorHash === hashline.computeHash('return a + b;'));
+
+const wire = hashline.serializeHashline(edit);
+check('serializeHashline has header', wire.startsWith('@@/src/math.ts|'));
+check('serializeHashline has OLD marker', wire.includes('<<<OLD'));
+check('serializeHashline has NEW marker', wire.includes('>>>NEW'));
+check('serializeHashline terminator', wire.endsWith('==='));
+
+const parsed = hashline.parseHashline(wire);
+check('parseHashline filePath', parsed.filePath === edit.filePath);
+check('parseHashline anchorHash', parsed.anchorHash === edit.anchorHash);
+check('parseHashline oldText', parsed.oldText === edit.oldText);
+check('parseHashline newText', parsed.newText === edit.newText);
+
+// with anchorLine
+const editWithLine = hashline.buildHashline('/src/x.ts', 'old', 'new', 42);
+check('buildHashline anchorLine', editWithLine.anchorLine === 42);
+const wireLine = hashline.serializeHashline(editWithLine);
+check('serializeHashline header has line', /@42$/.test(wireLine.split('\n')[0]));
+check('parseHashline anchorLine roundtrip', hashline.parseHashline(wireLine).anchorLine === 42);
+
+// apply hashline — exact match
+const result = hashline.applyHashline(sampleContent, edit);
+check('applyHashline exact status', result.status === 'exact');
+check('applyHashline applied change', result.content.includes('Number(a) + Number(b)'));
+check('applyHashline preserves rest', result.content.includes('return a - b;'));
+
+// stale anchor recovery: oldText slightly drifted (whitespace)
+const driftedContent = sampleContent.replace('  return a + b;', '   return a + b;');
+const staleEdit = hashline.buildHashline('/src/math.ts', '  return a + b;', '  return Number(a) + Number(b);');
+// The anchorHash won't match driftedContent's version, but findNearestMatch recovers.
+const staleResult = hashline.applyHashline(driftedContent, staleEdit);
+check('applyHashline recovered status', staleResult.status === 'recovered' || staleResult.status === 'exact');
+
+// findNearestMatch: exact present → drift 0
+const nm = hashline.findNearestMatch(sampleContent, 'return a - b;');
+check('findNearestMatch exact', nm.match === 'return a - b;' && nm.drift === 0);
+
+// findNearestMatch: within tolerance (1 char diff on one line)
+const fuzzy = hashline.findNearestMatch(sampleContent, 'return a - c;', 1);
+check('findNearestMatch fuzzy within 1', fuzzy.match !== null && fuzzy.drift <= 1);
+
+// findNearestMatch: beyond tolerance
+const far = hashline.findNearestMatch(sampleContent, 'totally absent content here', 3);
+check('findNearestMatch far returns null', far.match === null);
+
+// failed apply when oldText absent and no anchorLine
+const failEdit = hashline.buildHashline('/src/none.ts', 'does not exist anywhere', 'new');
+const failResult = hashline.applyHashline(sampleContent, failEdit);
+check('applyHashline failed status', failResult.status === 'failed');
+check('applyHashline failed content unchanged', failResult.content === sampleContent);
+
+// pure insertion via anchorLine fallback
+const insEdit = hashline.buildHashline('/src/new.ts', '', '// inserted header', 1);
+const insResult = hashline.applyHashline('line1\nline2', insEdit);
+check('applyHashline insertion fallback', insResult.status === 'fallback' && insResult.content.startsWith('// inserted header'));
+
+// native conversion roundtrip
+const native = hashline.toNativeEdit(edit);
+check('toNativeEdit filePath', native.filePath === edit.filePath);
+check('toNativeEdit oldString', native.oldString === edit.oldText);
+check('toNativeEdit newString', native.newString === edit.newText);
+const backToHl = hashline.fromNativeEdit(native);
+check('fromNativeEdit anchorHash', backToHl.anchorHash === edit.anchorHash);
+check('fromNativeEdit oldText', backToHl.oldText === edit.oldText);
+
+// token reduction measurement (acceptance: 40%+ on a large edit)
+const bigOld = 'x'.repeat(2000);
+const bigNew = 'y'.repeat(2000);
+const bigNative = { filePath: '/src/big.ts', oldString: bigOld, newString: bigNew };
+const reduc = hashline.tokenReduction(bigNative);
+check('tokenReduction >= 0.4', reduc >= 0.4);
+check('tokenReduction < 1', reduc < 1);
+
+// malformed parse throws
+let parseThrew = false;
+try { hashline.parseHashline('not a hashline'); }
+catch { parseThrew = true; }
+check('parseHashline malformed throws', parseThrew);
+
+// ---- checkpoint (Sprint 2.1) -------------------------------------------
+const convMessages = [
+  { id: 'm1', role: 'user', content: 'Investigate the auth module.', turn: 0, exploratory: false },
+  { id: 'm2', role: 'assistant', content: 'Looking at src/auth.ts. I see a potential SQL injection on line 42. The query concatenates user input directly into the SQL string without parameterization.', turn: 1, exploratory: true },
+  { id: 'm3', role: 'tool', content: 'grep -n query src/auth.ts returned 5 matches', turn: 2, exploratory: true },
+  { id: 'm4', role: 'assistant', content: 'I will now plan the fix. The injection is in the login handler.', turn: 3, exploratory: true },
+  { id: 'm5', role: 'user', content: 'Fix it now.', turn: 4, exploratory: false },
+];
+
+const ckpt = checkpoint.markCheckpoint(convMessages, 'run-ckpt1');
+check('markCheckpoint has id', ckpt.id.startsWith('ckpt-'));
+check('markCheckpoint turnIndex', ckpt.turnIndex === 5);
+check('markCheckpoint tokenCountBefore positive', ckpt.tokenCountBefore > 0);
+check('markCheckpoint runId', ckpt.runId === 'run-ckpt1');
+
+const { messages: pruned, summary: sum } = checkpoint.pruneAfterCheckpoint(convMessages, ckpt);
+check('pruneAfterCheckpoint reduces count', pruned.length < convMessages.length);
+check('pruneAfterCheckpoint keeps non-exploratory', pruned.some(m => m.id === 'm1'));
+check('pruneAfterCheckpoint keeps user directive', pruned.some(m => m.id === 'm5'));
+check('pruneAfterCheckpoint adds summary msg', pruned.some(m => m.id === `${ckpt.id}-summary`));
+check('pruneAfterCheckpoint summary has checkpoints pruned count', sum.prunedMessageCount === 3);
+check('pruneAfterCheckpoint tokensSaved positive', sum.tokensSaved > 0);
+check('pruneAfterCheckpoint summary non-empty', sum.summary.length > 0);
+
+// buildSummary bullets
+const sum2 = checkpoint.buildSummary(convMessages.filter(m => m.exploratory));
+check('buildSummary produces bullets', sum2.includes('- [assistant]') || sum2.includes('- [tool]'));
+check('buildSummary capped at 8 bullets', sum2.split('\n').length <= 9);
+
+// buildSummary empty
+check('buildSummary empty', checkpoint.buildSummary([]).includes('No exploratory'));
+
+// estimateTokens
+check('estimateTokens ~4 chars/token', checkpoint.estimateTokens('hello world!') === 3);
+check('estimateTokens empty', checkpoint.estimateTokens('') === 0);
+
+// rewind
+const rewound = checkpoint.rewindToCheckpoint(convMessages, ckpt);
+check('rewindToCheckpoint truncates', rewound.length === 5); // all turns < 5
+check('rewindToCheckpoint no turns >= checkpoint', rewound.every(m => m.turn < ckpt.turnIndex));
 
 rmSync(asyncStateDir, { recursive: true, force: true });
 
