@@ -418,6 +418,8 @@ As-needed sprints, each requires explicit approval.
 
 **Features**: 4.6 DAP/debug, 4.7 AST edits, 4.8 Goal loops
 
+**Status**: ✅ Complete (src/ pi-agnostic layer; extension wiring deferred)
+
 **Scope**: 28 DAP ops. ast-grep structural rewrites. Autonomous multi-turn with LLM judge.
 
 **Dependencies**: TIER 3 complete. DAP requires debug adapter protocol. AST requires tree-sitter.

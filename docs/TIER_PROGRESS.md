@@ -166,3 +166,23 @@ Sprints 3.1–3.2 (Weeks 15–18). Adds hindsight memory, web search providers
 - Collab msg-ids are monotonic (Date.now+counter) — no collisions in tight broadcast loops.
 - Zero network/IPC/TTY in src/ (PREVENT-ITH-004 — no annotation needed). Real WebSocket + pi TUI wiring deferred to extensions/ (where the PREVENT-ITH-004 exception annotation lives for collab relay).
 - ⚠️ `types.ts` now at 300/300 (zero headroom) — all future type additions MUST continue in new `types-sprint-N.N.ts` split files, never in types.ts directly.
+
+### Sprint 4.4 — DAP + AST + Goal Loops — COMPLETE ✅
+
+**Scope delivered:** pi-agnostic src/ layer with injectable transports. Real DAP process wiring + tree-sitter/ast-grep + LLM calls deferred to extensions/ (where PREVENT-ITH-004 exception annotations live).
+
+| File | Lines | Purpose |
+|---|---|---|
+| src/dap.ts | 224 | DapClient over injectable DapTransport — 28 DAP operations: lifecycle (initialize/launch/attach/disconnect), config (setExceptionBreakpoints/setBreakpoints), execution control (continue/pause/next/stepIn/stepOut/stepBack/restartFrame/configurationDone), thread+stack (threads/stackTrace/scopes/variables), eval+data (evaluate/setVariable/source/loadedSources/modules), advanced (completions/goto/restart/terminate/setFunctionBreakpoints), + stopped/terminated/output event subscriptions |
+| src/ast.ts | 102 | RegexAstMatcher (regex-based structural approximation) over injectable AstMatcher backend; findMatches, applyRewrite ($NAME capture expansion), expandTemplate, validateRewrite, chainRewrites. Real ast-grep/tree-sitter backend injectable in extensions/ |
+| src/goal-loops.ts | 127 | Autonomous multi-turn goal loops with injectable LlmActor (proposes next action) + LlmJudge (verdict + score); runGoalLoop with completeThreshold, maxIterations, onIteration, execute callback; manual steps (addStep/updateStep), stopGoalLoop, summarizeLoop |
+| src/types-sprint-4.4.ts | 147 | Pure types (DapBreakpoint/DapStackFrame/DapVariable/DapScope/DapThread/DapStoppedEvent/DapStopReason, AstMatch/AstRewrite/AstRewriteResult, GoalStep/GoalIteration/GoalLoop) |
+
+- Three injectable transports: `DapTransport` (request+on+isReady), `AstMatcher` (findMatches backend), `LlmActor`/`LlmJudge` (propose+judge). DI pattern mirrors lsp.ts/search.ts/collab.ts/tui.ts.
+- DAP client handles missing `transport.on` gracefully (returns no-op unsubscribe) — matches the defensive pattern from collab.ts.
+- AST matcher translates ast-grep-style `$$$NAME` capture syntax to regex; `RegexAstMatcher` is the src/ fallback (real ast-grep injectable in extensions/).
+- Goal loops support both judge-verdict-driven completion (complete/failed/continue) and threshold-driven (score >= 0.8), plus manual step planning and execute/onIteration callbacks.
+- Zero network/process/IPC/TTY in src/ (PREVENT-ITH-004 — no annotation needed). Real debug-adapter spawning, tree-sitter parsing, and LLM calls are extension-layer concerns.
+- types.ts remains at 300/300 (zero headroom, untouched); Sprint 4.4 types live in the new `types-sprint-4.4.ts` split file and are imported directly.
+- ⚠️ `npm run build` (tsc) had 2 newly-introduced errors in src/ast.ts (TS2724 AstMatcher import, TS18047 m-null-de-narrow) — both fixed via inline interface + const capture; tsc now passes clean for ast.ts.
+- 573 smoke assertions pass (+56 new for Sprint 4.4: 20 DAP, 11 AST, 18 goal-loops, plus 7 type/structure checks); guardrails + regression checks clean.
