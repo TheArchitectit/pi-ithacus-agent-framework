@@ -114,3 +114,22 @@ Sprints 3.1–3.2 (Weeks 15–18). Adds hindsight memory, web search providers
   (with PREVENT-ITH-004 exception annotation), and GitHub schemes
   (`pr://`, `issue://`, `conflict://`). Will require the first annotated
   network exceptions in the codebase.
+
+---
+
+## TIER 4 — Aspirational (v1.0+) — IN PROGRESS
+
+### Sprint 4.1 — LSP Integration — COMPLETE ✅
+
+**Scope delivered:** pi-agnostic src/ LSP client layer (not the extension wiring).
+
+| File | Lines | Purpose |
+|---|---|---|
+| src/lsp.ts | 221 | LspClient over injectable LspTransport; 14 LSP ops + lifecycle + shutdown |
+| src/types-sprint-4.1.ts | 122 | Pure LSP type declarations (Diagnostic, Location, Hover, Symbol, ...) |
+
+- 14 LSP operations: diagnostics, definition, references, rename, codeAction, workspaceSymbols, documentSymbol, hover, signatureHelp, formatting, foldingRange, selectionRange, linkedEditingRange, semanticTokensFull.
+- `LspTransport` is injectable (DI pattern mirrors `search.ts` FetchFn): zero network/process in src/ (PREVENT-ITH-004 — no annotation needed).
+- Spec-compliant: `WorkspaceEdit` parsed via `{changes?, documentChanges?}` (flattenWorkspaceEdit); `LocationLink` normalized to `LspLocation`; `LspMethod` enum bijects to client methods (publishDiagnostics push-notif replaced by diagnostic pull-request).
+- 455 smoke assertions pass (cumulative through Sprint 4.1).
+- Real LSP server spawning (child_process/node:net) deferred to extensions/ — out of scope for this src/ sprint.

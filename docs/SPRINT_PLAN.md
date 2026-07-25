@@ -376,6 +376,8 @@ As-needed sprints, each requires explicit approval.
 
 **Features**: 4.1 LSP integration (14 ops)
 
+**Status**: ✅ Complete (src/ pi-agnostic layer)
+
 **Scope**: diagnostics, go-to-definition, find-references, rename, code actions, workspace symbols, document symbols, hover, signature help, formatting, folding, selection range, linked editing, semantic tokens.
 
 **Dependencies**: TIER 3 complete. Requires language server process management.
