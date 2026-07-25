@@ -290,22 +290,22 @@
 - 3.3 GitHub schemes
 
 **Deliverables**:
-- [ ] src/hindsight.ts: retain (store key facts from session)
-- [ ] src/hindsight.ts: recall (query stored facts by relevance)
-- [ ] src/hindsight.ts: reflect (compress session into mental model)
-- [ ] src/hindsight.ts: extend IthMemory table with hindsight columns
-- [ ] src/search.ts: search provider interface
-- [ ] src/search.ts: Perplexity provider
-- [ ] src/search.ts: Exa provider
-- [ ] src/search.ts: Jina provider
-- [ ] src/search.ts: fallback chain (try providers in order)
-- [ ] src/search.ts: PREVENT-ITH-004 exception annotation
-- [ ] src/schemes.ts: pr:// scheme resolution
-- [ ] src/schemes.ts: issue:// scheme resolution
-- [ ] src/schemes.ts: conflict:// scheme resolution
-- [ ] src/types.ts: HindsightEntry, SearchResult, SchemeResolution types
-- [ ] Unit tests for retain/recall/reflect, search fallback, scheme parsing
-- [ ] Guardrails scan passes
+- [x] src/hindsight.ts: retain (store key facts from session)
+- [x] src/hindsight.ts: recall (query stored facts by relevance)
+- [x] src/hindsight.ts: reflect (compress session into mental model)
+- [x] src/hindsight.ts: extend IthMemory table with hindsight columns
+- [x] src/search.ts: search provider interface
+- [x] src/search.ts: Perplexity provider
+- [x] src/search.ts: Exa provider
+- [x] src/search.ts: Jina provider
+- [x] src/search.ts: fallback chain (try providers in order)
+- [x] src/search.ts: PREVENT-ITH-004 exception annotation
+- [x] src/schemes.ts: pr:// scheme resolution
+- [x] src/schemes.ts: issue:// scheme resolution
+- [x] src/schemes.ts: conflict:// scheme resolution
+- [x] src/types.ts: HindsightEntry, SearchResult, SchemeResolution types
+- [x] Unit tests for retain/recall/reflect, search fallback, scheme parsing
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - Retain stores facts with metadata (agent, run, timestamp)
