@@ -46,6 +46,10 @@ const streamRules = await import(join(buildDir, "stream-rules.ts"));
 const advisor = await import(join(buildDir, "advisor.ts"));
 const review = await import(join(buildDir, "review.ts"));
 const commits = await import(join(buildDir, "commits.ts"));
+const { HindsightStore } = await import(join(buildDir, "store-hindsight.ts"));
+const hindsight = await import(join(buildDir, "hindsight.ts"));
+const search = await import(join(buildDir, "search.ts"));
+const schemes = await import(join(buildDir, "schemes.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -858,6 +862,186 @@ check('commits.buildCommitMessage test type', testMsg.startsWith('test(src):'));
 
 check('commits.analyzeWorkingTree convenience', commits.analyzeWorkingTree(changes).length === atomic.length);
 check('commits.splitAtomicCommits empty', commits.splitAtomicCommits([]).length === 0);
+
+// ---- hindsight (Sprint 3.1) ---------------------------------------------
+const storeH = new IthStore(tmpRepo, cfg.loadConfig());
+const hStore = new HindsightStore(storeH.db);
+
+const e1 = hindsight.retain(hStore, { repoId: 'repo-x', agentId: 'a1', runId: 'r1', kind: 'decision', text: 'Use SQLite for all persistence', relevance: 0.9 });
+check('hindsight.retain returns entry', e1.id.startsWith('hindsight-'));
+check('hindsight.retain clamps relevance', e1.relevance === 0.9);
+
+const e2 = hindsight.retain(hStore, { repoId: 'repo-x', agentId: 'a2', runId: 'r1', kind: 'fact', text: 'Auth module has SQL injection risk', relevance: 0.7 });
+const e3 = hindsight.retain(hStore, { repoId: 'repo-x', agentId: 'a1', runId: 'r1', kind: 'preference', text: 'Prefer const over let', relevance: 0.3 });
+
+const recalled = hindsight.recall(hStore, 'repo-x');
+check('hindsight.recall returns entries', recalled.length === 3);
+check('hindsight.recall sorted by relevance desc', recalled[0].relevance >= recalled[1].relevance && recalled[1].relevance >= recalled[2].relevance);
+check('hindsight.recall top is 0.9', recalled[0].relevance === 0.9);
+
+const recalledKind = hindsight.recall(hStore, 'repo-x', { kind: 'decision' });
+check('hindsight.recall filters by kind', recalledKind.length === 1 && recalledKind[0].text.includes('SQLite'));
+
+const recalledMinRel = hindsight.recall(hStore, 'repo-x', { minRelevance: 0.5 });
+check('hindsight.recall minRelevance filter', recalledMinRel.length === 2);
+
+const recalledLimit = hindsight.recall(hStore, 'repo-x', { limit: 1 });
+check('hindsight.recall limit', recalledLimit.length === 1);
+
+// relevance scoring
+check('hindsight.scoreRelevance full match', hindsight.scoreRelevance('use sqlite for persistence', 'sqlite persistence') === 1);
+check('hindsight.scoreRelevance no match', hindsight.scoreRelevance('auth module', 'sqlite persistence') === 0);
+check('hindsight.scoreRelevance empty query', hindsight.scoreRelevance('some text', '') === 0.5);
+
+// reflect
+const sessionMsgs = Array.from({ length: 12 }, (_, i) => ({
+  agentId: `a${i % 3}`, role: i % 2 === 0 ? 'assistant' : 'user',
+  content: `message ${i} about ${['sqlite', 'auth', 'config'][i % 3]} module`, ts: i,
+}));
+const reflected = hindsight.reflect(hStore, sessionMsgs, { repoId: 'repo-x', query: 'sqlite persistence', maxEntries: 5 });
+check('hindsight.reflect returns summary', reflected.summary.includes('Session Reflection'));
+check('hindsight.reflect compresses to maxEntries', reflected.summary.includes('5 retained'));
+check('hindsight.reflect reduces 12 to 5', reflected.summary.startsWith('# Session Reflection (12 messages → 5 retained)'));
+check('hindsight.reflect reflectedCount is count of already-reflected (0 here)', reflected.reflectedCount === 0);
+// reflect is read-only: it does not mutate the store, so recall is unchanged
+check('hindsight.reflect does not mutate store', hindsight.recall(hStore, 'repo-x').length === 3);
+
+// reflect empty
+const emptyReflect = hindsight.reflect(hStore, [], { repoId: 'repo-x' });
+check('hindsight.reflect empty messages', emptyReflect.summary.includes('No session messages'));
+
+// markReflected
+// markReflected changes what reflect() reports as reflectedCount (1 now)
+const beforeMark = hindsight.reflect(hStore, [], { repoId: 'repo-x' });
+check('hindsight.reflect empty messages (pre-mark)', beforeMark.summary.includes('No session messages'));
+check('hindsight.reflect reflectedCount still 0 for empty (no mutation)', beforeMark.reflectedCount === 0);
+hStore.markReflected(e1.id);
+check('hindsight.markReflected works', hStore.reflectedEntries('repo-x').some(e => e.id === e1.id));
+const afterMarkReflect = hindsight.reflect(hStore, sessionMsgs, { repoId: 'repo-x', query: 'sqlite', maxEntries: 5 });
+check('hindsight.reflect reports 1 reflected after markReflected', afterMarkReflect.reflectedCount === 1);
+
+// clearHindsight
+hStore.clearHindsight('repo-x');
+const afterClear = hindsight.recall(hStore, 'repo-x');
+check('hindsight.clearHindsight resets relevance', afterClear.every(e => e.relevance === 0));
+
+storeH.close();
+
+// ---- search (Sprint 3.1) -----------------------------------------------
+// Mock fetch fn for network-free testing.
+const mockFetch = (responses) => {
+  let call = 0;
+  return async (url, opts) => {
+    const r = responses[call++] || { ok: false, status: 500, text: async () => 'fail', json: async () => ({}) };
+    if (r.throw) throw new Error(r.throw);
+    return {
+      ok: r.ok ?? true,
+      status: r.status ?? 200,
+      text: async () => r.text || '',
+      json: async () => r.json || {},
+    };
+  };
+};
+
+// Perplexity provider
+const perplexityResults = await search.perplexityProvider.search('test query', {
+  fetchFn: mockFetch([{ json: { choices: [{ message: { content: 'See https://example.com/a and https://example.com/b' } }] } }]),
+  apiKey: 'pk-test',
+});
+check('perplexityProvider returns results', perplexityResults.length === 2);
+check('perplexityProvider sets provider', perplexityResults[0].provider === 'perplexity');
+check('perplexityProvider extracts urls', perplexityResults[0].url.includes('example.com'));
+
+// Perplexity missing key throws
+let perplexityThrew = false;
+try { await search.perplexityProvider.search('q', { fetchFn: mockFetch([]), apiKey: undefined }); }
+catch { perplexityThrew = true; }
+check('perplexityProvider throws without key', perplexityThrew);
+
+// Exa provider
+const exaResults = await search.exaProvider.search('test', {
+  fetchFn: mockFetch([{ json: { results: [{ title: 'R1', url: 'https://exa.io/1', text: 'snippet', score: 0.8 }] } }]),
+  apiKey: 'ex-test',
+});
+check('exaProvider returns results', exaResults.length === 1);
+check('exaProvider maps title', exaResults[0].title === 'R1');
+check('exaProvider sets score', exaResults[0].score === 0.8);
+
+// Jina provider (no key required)
+const jinaResults = await search.jinaProvider.search('test', {
+  fetchFn: mockFetch([{ json: { data: [{ title: 'J1', url: 'https://jina.io/1', content: 'text' }] } }]),
+});
+check('jinaProvider returns results', jinaResults.length === 1);
+check('jinaProvider sets provider', jinaResults[0].provider === 'jina');
+
+// Fallback chain: first provider fails, second succeeds
+const chainResult = await search.searchWithFallback('query', {
+  fetchFn: mockFetch([
+    { throw: 'perplexity down' },
+    { json: { results: [{ title: 'Exa fallback', url: 'https://exa.io/fb', score: 0.5 }] } },
+  ]),
+  apiKeys: { perplexity: 'pk', exa: 'ex' },
+});
+check('searchWithFallback returns results', chainResult.results.length === 1);
+check('searchWithFallback used exa', chainResult.provider === 'exa');
+check('searchWithFallback records perplexity error', chainResult.errors[0].provider === 'perplexity');
+
+// Fallback chain: all fail
+const allFail = await search.searchWithFallback('q', {
+  fetchFn: mockFetch([{ throw: 'e1' }, { throw: 'e2' }, { throw: 'e3' }]),
+  apiKeys: { perplexity: 'pk', exa: 'ex' },
+});
+check('searchWithFallback all fail returns empty', allFail.results.length === 0);
+check('searchWithFallback all fail no provider', allFail.provider === '');
+check('searchWithFallback all fail 3 errors', allFail.errors.length === 3);
+
+// Fallback chain: custom providers order
+const chainJinaFirst = await search.searchWithFallback('q', {
+  fetchFn: mockFetch([{ json: { data: [{ title: 'J', url: 'https://j.io/1', content: 'x' }] } }]),
+  providers: [search.jinaProvider],
+});
+check('searchWithFallback custom providers', chainJinaFirst.provider === 'jina');
+
+check('search.DEFAULT_PROVIDERS has 3', search.DEFAULT_PROVIDERS.length === 3);
+
+// ---- schemes (Sprint 3.1) ----------------------------------------------
+const prRes = schemes.resolveScheme('pr://123');
+check('resolveScheme pr', prRes.scheme === 'pr' && prRes.ref === '123');
+check('resolveScheme pr command', prRes.command === 'gh');
+check('resolveScheme pr args', JSON.stringify(prRes.args) === JSON.stringify(['pr', 'view', '123']));
+check('resolveScheme pr kind', prRes.kind === 'pull_request');
+check('resolveScheme pr description', prRes.description.includes('#123'));
+
+const issueRes = schemes.resolveScheme('issue://456');
+check('resolveScheme issue', issueRes.scheme === 'issue' && issueRes.ref === '456');
+check('resolveScheme issue args', JSON.stringify(issueRes.args) === JSON.stringify(['issue', 'view', '456']));
+
+const conflictRes = schemes.resolveScheme('conflict://main...feature');
+check('resolveScheme conflict', conflictRes.scheme === 'conflict');
+check('resolveScheme conflict ref', conflictRes.ref === 'main...feature');
+check('resolveScheme conflict command', conflictRes.command === 'git');
+check('resolveScheme conflict args', JSON.stringify(conflictRes.args) === JSON.stringify(['diff', 'main...feature']));
+
+check('isSchemeUri pr', schemes.isSchemeUri('pr://1') === true);
+check('isSchemeUri issue', schemes.isSchemeUri('issue://2') === true);
+check('isSchemeUri conflict', schemes.isSchemeUri('conflict://a...b') === true);
+check('isSchemeUri not scheme', schemes.isSchemeUri('https://example.com') === false);
+
+check('formatResolution includes description', schemes.formatResolution(prRes).includes('View pull request'));
+check('formatResolution includes command', schemes.formatResolution(prRes).includes('gh pr view'));
+
+check('buildSchemeUri pr', schemes.buildSchemeUri('pr', '123') === 'pr://123');
+check('buildSchemeUri conflict', schemes.buildSchemeUri('conflict', 'main...feature') === 'conflict://main...feature');
+
+check('SUPPORTED_SCHEMES has 3', schemes.SUPPORTED_SCHEMES.length === 3);
+
+let schemeThrew = false;
+try { schemes.resolveScheme('unknown://abc'); }
+catch { schemeThrew = true; }
+check('resolveScheme unknown throws', schemeThrew);
+
+const prResWhitespace = schemes.resolveScheme('  pr://789  ');
+check('resolveScheme trims whitespace', prResWhitespace.ref === '789');
 
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });

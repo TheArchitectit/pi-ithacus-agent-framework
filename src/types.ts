@@ -274,6 +274,9 @@ export type { StreamRule, ConfigRule, ConfigFormat, SkillDefinition } from './ty
 // ---- Advisor + Review + Commits (Sprint 2.3) — split out ----
 export type { Priority, AdvisorNote, ReviewVerdict, ReviewFinding, AtomicCommit } from './types-sprint-2.3.js';
 
+// ---- Memory + Search + Schemes (Sprint 3.1) — split out ----
+export type { RelevanceScore, HindsightEntry, SearchResult, SchemeResolution } from './types-sprint-3.1.js';
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {
