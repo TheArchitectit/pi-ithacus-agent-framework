@@ -247,20 +247,20 @@
 - 2.8 Atomic commit splits
 
 **Deliverables**:
-- [ ] extensions/ithacus-advisor.ts: second model watching turns
-- [ ] extensions/ithacus-advisor.ts: inline note injection (concern/blocker/suggestion)
-- [ ] extensions/ithacus-advisor.ts: separate context from main agent
-- [ ] extensions/ithacus-advisor.ts: budget control (max notes per session)
-- [ ] extensions/ithacus-events/: dedicated reviewer subagent spawn
-- [ ] extensions/ithacus-events/: P0-P3 priority scoring
-- [ ] extensions/ithacus-events/: confidence scoring
-- [ ] src/commits.ts: analyze working tree changes
-- [ ] src/commits.ts: split unrelated changes into atomic commits
-- [ ] src/commits.ts: dependency ordering between commits
-- [ ] src/commits.ts: source files scored above tests/docs
-- [ ] src/types.ts: AdvisorNote, ReviewVerdict, AtomicCommit types
-- [ ] Unit tests for advisor injection, review scoring, commit splitting
-- [ ] Guardrails scan passes
+- [x] extensions/ithacus-advisor.ts: second model watching turns
+- [x] extensions/ithacus-advisor.ts: inline note injection (concern/blocker/suggestion)
+- [x] extensions/ithacus-advisor.ts: separate context from main agent
+- [x] extensions/ithacus-advisor.ts: budget control (max notes per session)
+- [x] extensions/ithacus-events/: dedicated reviewer subagent spawn
+- [x] extensions/ithacus-events/: P0-P3 priority scoring
+- [x] extensions/ithacus-events/: confidence scoring
+- [x] src/commits.ts: analyze working tree changes
+- [x] src/commits.ts: split unrelated changes into atomic commits
+- [x] src/commits.ts: dependency ordering between commits
+- [x] src/commits.ts: source files scored above tests/docs
+- [x] src/types.ts: AdvisorNote, ReviewVerdict, AtomicCommit types
+- [x] Unit tests for advisor injection, review scoring, commit splitting
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - Advisor injects notes without disrupting main agent flow
