@@ -129,23 +129,23 @@
 - Integration testing of all TIER 1 features
 
 **Deliverables**:
-- [ ] src/model-profiles.ts: profile CRUD (create, read, update, delete)
-- [ ] src/model-profiles.ts: 5 pre-seeded profiles (Speed, Quality, Reasoning, Code, Local)
-- [ ] src/model-profiles.ts: cost estimation per profile
-- [ ] src/model-profiles.ts: profile resolution (highest precedence in chain)
-- [ ] src/store.ts: ith_model_profiles, ith_team_model_assignments tables
-- [ ] extensions/ithacus-commands.ts: /ithacus-profiles command
-- [ ] extensions/ithacus-commands.ts: interactive profile selection prompt
-- [ ] extensions/ithacus-team.ts: per-role profile assignment flow
-- [ ] src/validator.ts: rules-based prompt scoring (4 dimensions)
-- [ ] src/validator.ts: ValidationReport generation
-- [ ] src/validator.ts: profile + team size recommendation
-- [ ] extensions/ithacus-commands.ts: validation before createTeam
-- [ ] src/types.ts: ModelProfile, TeamModelAssignment, ValidationReport, ScoredDimension types
-- [ ] Integration tests: full team creation flow with profiles + validation
-- [ ] Guardrails scan passes
-- [ ] Regression check passes
-- [ ] Smoke test passes
+- [x] src/model-profiles.ts: profile CRUD (create, read, update, delete)
+- [x] src/model-profiles.ts: 5 pre-seeded profiles (Speed, Quality, Reasoning, Code, Local)
+- [x] src/model-profiles.ts: cost estimation per profile
+- [x] src/model-profiles.ts: profile resolution (highest precedence in chain)
+- [x] src/store.ts: ith_model_profiles, ith_team_model_assignments tables
+- [x] extensions/ithacus-commands.ts: /ithacus-profiles command
+- [x] extensions/ithacus-commands.ts: interactive profile selection prompt
+- [x] extensions/ithacus-team.ts: per-role profile assignment flow
+- [x] src/validator.ts: rules-based prompt scoring (4 dimensions)
+- [x] src/validator.ts: ValidationReport generation
+- [x] src/validator.ts: profile + team size recommendation
+- [x] extensions/ithacus-commands.ts: validation before createTeam
+- [x] src/types.ts: ModelProfile, TeamModelAssignment, ValidationReport, ScoredDimension types
+- [x] Integration tests: full team creation flow with profiles + validation
+- [x] Guardrails scan passes
+- [x] Regression check passes
+- [x] Smoke test passes
 
 **Acceptance Criteria**:
 - /ithacus-team shows profile selection prompt
