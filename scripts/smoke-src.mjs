@@ -43,6 +43,9 @@ const hashline = await import(join(buildDir, "hashline.ts"));
 const checkpoint = await import(join(buildDir, "checkpoint.ts"));
 const configFormats = await import(join(buildDir, "config-formats.ts"));
 const streamRules = await import(join(buildDir, "stream-rules.ts"));
+const advisor = await import(join(buildDir, "advisor.ts"));
+const review = await import(join(buildDir, "review.ts"));
+const commits = await import(join(buildDir, "commits.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -751,6 +754,110 @@ reg.clear();
 check('registry.clear empties', reg.list().length === 0);
 
 rmSync(asyncStateDir, { recursive: true, force: true });
+
+// ---- advisor (Sprint 2.3) ----------------------------------------------
+const sess = advisor.createAdvisorSession(3);
+check('advisor default budget const', advisor.DEFAULT_ADVISOR_BUDGET === 10);
+check('advisor initial remaining', sess.remaining() === 3);
+
+const n1 = sess.emit({ kind: 'blocker', priority: 'P0', confidence: 80, text: 'SQL injection risk', turnIndex: 1 });
+check('advisor.emit returns note', n1?.id.startsWith('note-'));
+check('advisor.emit clamps confidence', n1?.confidence === 80);
+check('advisor.remaining decremented', sess.remaining() === 2);
+
+const n1dup = sess.emit({ kind: 'blocker', priority: 'P0', confidence: 80, text: 'sql injection risk', turnIndex: 2 });
+check('advisor dedups by text (case-insensitive)', n1dup === null);
+check('advisor.remaining unchanged after dedup', sess.remaining() === 2);
+
+const n2 = sess.emit({ kind: 'suggestion', priority: 'P3', confidence: 150, text: 'refactor this', turnIndex: 1 });
+check('advisor clamps confidence over 100', n2?.confidence === 100);
+
+sess.emit({ kind: 'concern', priority: 'P1', confidence: 60, text: 'edge case', turnIndex: 1 });
+sess.emit({ kind: 'suggestion', priority: 'P2', confidence: 40, text: 'add tests', turnIndex: 2 });
+check('advisor budget exhausted returns null', sess.emit({ kind: 'suggestion', priority: 'P3', confidence: 50, text: 'overflow', turnIndex: 3 }) === null);
+
+const turn1 = sess.injectionsForTurn(1);
+check('advisor.injectionsForTurn returns 3 notes', turn1.length === 3);
+check('advisor injections blockers first', turn1[0].kind === 'blocker');
+check('advisor injections concern before suggestion', turn1.indexOf(turn1.find(n => n.kind === 'concern')) < turn1.indexOf(turn1.find(n => n.kind === 'suggestion')));
+
+const listedNotes = sess.list();
+check('advisor.list P0 first', listedNotes[0].priority === 'P0');
+
+check('advisor.priorityRank P0=0', advisor.priorityRank('P0') === 0);
+check('advisor.priorityRank P3=3', advisor.priorityRank('P3') === 3);
+check('advisor.isBlockerPriority P0', advisor.isBlockerPriority('P0') === true);
+check('advisor.isBlockerPriority P2', advisor.isBlockerPriority('P2') === false);
+
+// ---- review (Sprint 2.3) -----------------------------------------------
+const safeFile = 'function add(a, b) {\n  return a + b;\n}\n';
+check('review.scoreFile clean', review.scoreFile('/src/safe.ts', safeFile).length === 0);
+
+const riskyFile = 'const apiKey = "sk-123";\neval(userInput);\nconsole.log(apiKey);\n// TODO: fix later\n';
+const findings = review.scoreFile('/src/risky.ts', riskyFile);
+check('review.scoreFile finds issues', findings.length >= 3);
+check('review.scoreFile secret P0', findings.some(f => f.priority === 'P0'));
+check('review.scoreFile eval P1', findings.some(f => f.priority === 'P1'));
+check('review.scoreFile sets filePath', findings.every(f => f.filePath === '/src/risky.ts'));
+check('review.scoreFile sets line numbers', findings.every(f => f.line !== null));
+
+const verdict = review.buildVerdict(findings);
+check('review.buildVerdict topPriority worst', verdict.topPriority === 'P0');
+check('review.buildVerdict not approved (blockers)', verdict.approved === false);
+check('review.buildVerdict confidence in range', verdict.confidence >= 0 && verdict.confidence <= 100);
+check('review.buildVerdict summary mentions blocked', verdict.summary.includes('Blocked'));
+
+const cleanVerdict = review.buildVerdict([]);
+check('review.buildVerdict empty approved', cleanVerdict.approved === true);
+check('review.buildVerdict empty summary', cleanVerdict.summary.includes('Approved'));
+
+const nonBlockerFindings = [
+  { filePath: '/x.ts', line: 1, priority: 'P2', confidence: 60, message: 'TODO' },
+  { filePath: '/x.ts', line: 2, priority: 'P3', confidence: 50, message: 'log' },
+];
+const nbVerdict = review.buildVerdict(nonBlockerFindings);
+check('review.buildVerdict non-blocker approved', nbVerdict.approved === true);
+check('review.buildVerdict topPriority P2', nbVerdict.topPriority === 'P2');
+
+check('review.findingConfidence clamps', review.findingConfidence({ confidence: 150 }) === 100);
+
+// ---- commits (Sprint 2.3) ----------------------------------------------
+check('commits.classifyFile source', commits.classifyFile('/src/auth.ts') === 'source');
+check('commits.classifyFile test', commits.classifyFile('/src/auth.test.ts') === 'test');
+check('commits.classifyFile docs', commits.classifyFile('/docs/guide.md') === 'docs');
+check('commits.classifyFile config', commits.classifyFile('tsconfig.json') === 'config');
+check('commits.classifyFile other', commits.classifyFile('/assets/logo.png') === 'other');
+
+check('commits.fileScore source high', commits.fileScore('/src/a.ts') === 5);
+check('commits.fileScore docs low', commits.fileScore('/README.md') === 2);
+
+const changes = [
+  { path: 'src/auth.ts', status: 'modified', linesChanged: 20 },
+  { path: 'src/auth.test.ts', status: 'modified', linesChanged: 10 },
+  { path: 'docs/guide.md', status: 'modified', linesChanged: 5 },
+  { path: 'src/utils.ts', status: 'added', linesChanged: 30 },
+  { path: 'package.json', status: 'modified', linesChanged: 2 },
+];
+const atomic = commits.splitAtomicCommits(changes);
+const findCommit = (file) => atomic.find(c => c.files.includes(file));
+check('commits.splitAtomicCommits groups by dir+cat', atomic.length >= 3);
+check('commits.splitAtomicCommits all files covered', atomic.reduce((s, c) => s + c.files.length, 0) === changes.length);
+check('commits.splitAtomicCommits assigns ids', atomic.every(c => c.id.startsWith('commit-')));
+check('commits.splitAtomicCommits builds messages', atomic.every(c => c.message.length > 0));
+check('commits source before tests', findCommit('src/auth.ts').order < findCommit('src/auth.test.ts').order);
+check('commits source before docs', findCommit('src/utils.ts').order < findCommit('docs/guide.md').order);
+check('commits tests depend on source', findCommit('src/auth.test.ts').dependsOn.length > 0);
+check('commits docs depend on source', findCommit('docs/guide.md').dependsOn.length > 0);
+check('commits source has no deps', findCommit('src/auth.ts').dependsOn.length === 0);
+check('commits order sequential', atomic.every(c => c.order >= 1));
+
+const msg = commits.buildCommitMessage([{ path: 'src/auth.ts', status: 'modified', linesChanged: 10 }], 'source');
+check('commits.buildCommitMessage source feat', msg.startsWith('feat(src):'));
+const testMsg = commits.buildCommitMessage([{ path: 'src/auth.test.ts', status: 'added', linesChanged: 5 }], 'test');
+check('commits.buildCommitMessage test type', testMsg.startsWith('test(src):'));
+
+check('commits.analyzeWorkingTree convenience', commits.analyzeWorkingTree(changes).length === atomic.length);
+check('commits.splitAtomicCommits empty', commits.splitAtomicCommits([]).length === 0);
 
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });

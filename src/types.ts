@@ -271,6 +271,9 @@ export interface CheckpointSummary {
 // ---- Stream Rules + Config formats + Skills (Sprint 2.2) — split out ----
 export type { StreamRule, ConfigRule, ConfigFormat, SkillDefinition } from './types-sprint-2.js';
 
+// ---- Advisor + Review + Commits (Sprint 2.3) — split out ----
+export type { Priority, AdvisorNote, ReviewVerdict, ReviewFinding, AtomicCommit } from './types-sprint-2.3.js';
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {
