@@ -41,6 +41,8 @@ const profiles = await import(join(buildDir, "model-profiles.ts"));
 const validator = await import(join(buildDir, "validator.ts"));
 const hashline = await import(join(buildDir, "hashline.ts"));
 const checkpoint = await import(join(buildDir, "checkpoint.ts"));
+const configFormats = await import(join(buildDir, "config-formats.ts"));
+const streamRules = await import(join(buildDir, "stream-rules.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -611,6 +613,139 @@ check('estimateTokens empty', checkpoint.estimateTokens('') === 0);
 const rewound = checkpoint.rewindToCheckpoint(convMessages, ckpt);
 check('rewindToCheckpoint truncates', rewound.length === 5); // all turns < 5
 check('rewindToCheckpoint no turns >= checkpoint', rewound.every(m => m.turn < ckpt.turnIndex));
+
+// ---- config formats (Sprint 2.2) ----------------------------------------
+const cursorMdc = `---\napplyTo: "**/*.ts"\ndescription: TS rules\n---\nUse 2 spaces for indentation.\nPrefer const over let.`;
+const cursorRules = configFormats.parseCursorMdc(cursorMdc);
+check('parseCursorMdc returns 1 rule', cursorRules.length === 1);
+check('parseCursorMdc applyTo', cursorRules[0]?.applyTo === '**/*.ts');
+check('parseCursorMdc format', cursorRules[0]?.format === 'cursor-mdc');
+check('parseCursorMdc body', cursorRules[0]?.body.includes('2 spaces'));
+
+const clineRules = configFormats.parseClineRules('## TypeScript files (*.ts)\nUse strict mode.\n\n## Other\nBe concise.');
+check('parseClineRules returns 2', clineRules.length === 2);
+check('parseClineRules glob extract', clineRules[0]?.applyTo === '*.ts');
+check('parseClineRules format', clineRules[0]?.format === 'cline-clinerules');
+
+const codexContent = 'Be careful with exports.\n\n## TypeScript\nUse const.\n\n## Python\nUse type hints.';
+const codexRules = configFormats.parseCodexAgents(codexContent);
+check('parseCodexAgents global rule', codexRules.some(r => r.applyTo === '*'));
+check('parseCodexAgents headings', codexRules.length >= 2);
+check('parseCodexAgents format', codexRules[0]?.format === 'codex-agents');
+
+const copilotContent = 'applyTo: **/*.js\nUse strict.\napplyTo: **/*.py\nUse type hints.';
+const copilotRules = configFormats.parseCopilotApplyTo(copilotContent);
+check('parseCopilotApplyTo returns 2', copilotRules.length === 2);
+check('parseCopilotApplyTo glob js', copilotRules[0]?.applyTo === '**/*.js');
+check('parseCopilotApplyTo format', copilotRules[0]?.format === 'copilot-applyTo');
+
+const aiderRules = configFormats.parseAider('Always write tests.\nKeep functions small.');
+check('parseAider single rule', aiderRules.length === 1);
+check('parseAider global', aiderRules[0]?.applyTo === '*');
+check('parseAider format', aiderRules[0]?.format === 'aider');
+
+const continueContent = 'rules:\n  - applyTo: **/*.ts\n    use const\n  - applyTo: **/*.py\n    use type hints\n';
+const continueRules = configFormats.parseContinue(continueContent);
+check('parseContinue returns 2', continueRules.length === 2);
+check('parseContinue first glob', continueRules[0]?.applyTo === '**/*.ts');
+check('parseContinue format', continueRules[0]?.format === 'continue');
+
+const codyContent = '## path:src/**/*.ts\nUse strict.\n\n## path:tests/**/*.ts\nUse describe/it.';
+const codyRules = configFormats.parseCody(codyContent);
+check('parseCody returns 2', codyRules.length === 2);
+check('parseCody path glob', codyRules[0]?.applyTo === 'src/**/*.ts');
+check('parseCody format', codyRules[0]?.format === 'cody');
+
+const genericRules = configFormats.parseGeneric('Just plain rules.');
+check('parseGeneric single rule', genericRules.length === 1 && genericRules[0].format === 'generic');
+
+// dispatch via parseConfigFormat
+const dispatched = configFormats.parseConfigFormat(cursorMdc, 'cursor-mdc');
+check('parseConfigFormat dispatch works', dispatched.length === 1);
+const fallback = configFormats.parseConfigFormat('unknown', 'generic');
+check('parseConfigFormat generic fallback', fallback.length === 1);
+
+// loadConfigFile on missing file
+check('loadConfigFile missing returns []', configFormats.loadConfigFile('/nonexistent/xyz.md', 'cursor-mdc').length === 0);
+
+// FORMAT_PARSERS has all 8
+check('FORMAT_PARSERS has 8 formats', Object.keys(configFormats.FORMAT_PARSERS).length === 8);
+
+// ---- skill discovery (Sprint 2.2) --------------------------------------
+const skillDir = mkdtempSync(join(tmpdir(), 'ithacus-skills-'));
+// extension layer
+mkdirSync(join(skillDir, 'ext', 'lint'), { recursive: true });
+writeFileSync(join(skillDir, 'ext', 'lint', 'SKILL.md'), '---\nname: lint\ntriggers: lint, eslint\n---\n# Lint Skill\nRun eslint on changed files.');
+// project layer (overrides ext's lint)
+mkdirSync(join(skillDir, 'project', 'lint'), { recursive: true });
+writeFileSync(join(skillDir, 'project', 'lint', 'SKILL.md'), '---\nname: lint\ntriggers: lint, eslint\n---\n# Project Lint Override\nUse project eslint config.');
+// user layer
+mkdirSync(join(skillDir, 'user', 'test'), { recursive: true });
+writeFileSync(join(skillDir, 'user', 'test', 'SKILL.md'), '---\nname: test\n---\n# Test Skill\nRun tests after changes.');
+
+const skills = configFormats.discoverSkills({
+  extensionDir: join(skillDir, 'ext'),
+  userDir: join(skillDir, 'user'),
+  projectDir: join(skillDir, 'project'),
+});
+check('discoverSkills finds merged skills', skills.length === 2); // lint + test (lint deduped)
+const lintSkill = skills.find(s => s.name === 'lint');
+check('discoverSkills project overrides ext', lintSkill?.layer === 'project');
+check('discoverSkills project body override', lintSkill?.body.includes('project eslint config'));
+const testSkill = skills.find(s => s.name === 'test');
+check('discoverSkills user layer test', testSkill?.layer === 'user');
+check('discoverSkills triggers parsed', lintSkill?.triggers.includes('eslint'));
+
+// validateSkillMd
+check('validateSkillMd valid', configFormats.validateSkillMd('# Title\nbody text here longer') === null);
+check('validateSkillMd empty', configFormats.validateSkillMd('').includes('empty'));
+check('validateSkillMd no body', configFormats.validateSkillMd('---\nname: x\n---').includes('no body'));
+
+rmSync(skillDir, { recursive: true, force: true });
+
+// ---- stream rules (Sprint 2.2) -----------------------------------------
+const reg = streamRules.createStreamRuleRegistry();
+const r1 = reg.add({ pattern: 'TODO', flags: 'i', inject: 'Remember to resolve TODOs before commit.' });
+check('registry.add returns rule', r1.id.startsWith('rule-'));
+check('registry.add persists', reg.get(r1.id)?.pattern === 'TODO');
+check('registry.list', reg.list().length === 1);
+
+const injections = reg.scan('Here is a TODO item in the stream');
+check('registry.scan finds match', injections.length === 1);
+check('registry.scan injects text', injections[0]?.inject.includes('resolve TODOs'));
+check('registry.scan increments fire count', reg.scan('another TODO').length === 1);
+
+// maxFires limit
+const srLimit = reg.add({ pattern: 'FIXME', inject: 'fix me note', maxFires: 2 });
+reg.scan('a FIXME here');
+reg.scan('another FIXME');
+const thirdScan = reg.scan('third FIXME');
+check('registry.maxFires blocks after limit', thirdScan.filter(i => i.ruleId === srLimit.id).length === 0);
+
+// compaction survival
+const srPersist = reg.add({ pattern: 'persist', inject: 'persisted', persistAfterCompaction: true });
+const srEphemeral = reg.add({ pattern: 'ephemeral', inject: 'gone soon', persistAfterCompaction: false });
+const survived = reg.surviveCompaction();
+check('registry.surviveCompaction drops ephemeral', !reg.get(srEphemeral.id));
+check('registry.surviveCompaction keeps persistent', reg.get(srPersist.id) !== undefined);
+check('registry.surviveCompaction returns count', survived >= 1);
+
+// capture expansion
+const reg2 = streamRules.createStreamRuleRegistry();
+const rcap = reg2.add({ pattern: 'function\\s+(\\w+)', flags: 'g', inject: 'Found function: $1' });
+const capInj = reg2.scan('function myFunc() {}');
+check('registry.scan captures', capInj[0]?.inject === 'Found function: myFunc');
+
+// functional helpers
+check('compileRule valid', streamRules.compileRule({ pattern: 'abc', flags: 'i' }) !== null);
+check('compileRule invalid', streamRules.compileRule({ pattern: '(', flags: '' }) === null);
+check('ruleMatches positive', streamRules.ruleMatches({ pattern: 'TODO', flags: 'i' }, 'a TODO item') === true);
+check('ruleMatches negative', streamRules.ruleMatches({ pattern: 'FIXME', flags: 'i' }, 'no match here') === false);
+check('survivesCompaction true', streamRules.survivesCompaction({ persistAfterCompaction: true }) === true);
+check('survivesCompaction false', streamRules.survivesCompaction({ persistAfterCompaction: false }) === false);
+
+reg.clear();
+check('registry.clear empties', reg.list().length === 0);
 
 rmSync(asyncStateDir, { recursive: true, force: true });
 
