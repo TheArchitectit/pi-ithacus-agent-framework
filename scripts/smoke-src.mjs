@@ -1657,6 +1657,14 @@ await (async () => {
   check('tui.renderDiff removed', diff.removed.length === 1 && diff.removed[0] === 'c2');
   check('tui.renderDiff applied to renderer', tc.renderer._diffs.length === 1);
 
+  // kind-only change triggers update (P2 fix)
+  const tcKind = createTuiClient(makeRenderer());
+  tcKind.addCard({ id: 'k1', title: 'K', body: 'same', kind: 'tool_call', collapsed: false });
+  await tcKind.render();
+  tcKind.updateCard({ id: 'k1', title: 'K', body: 'same', kind: 'tool_result', collapsed: false });
+  const diffKind = await tcKind.renderDiff();
+  check('tui.renderDiff detects kind-only change', diffKind.updated.length === 1 && diffKind.updated[0].id === 'k1');
+
   // edit preview
   await tc.renderEditPreview({ filePath: '/src/x.ts', before: 'a', after: 'b', diffHunks: ['-a', '+b'] });
   check('tui.renderEditPreview adds card', tc.renderer._diffs.length === 2);
@@ -1780,6 +1788,18 @@ await (async () => {
   check('collab.leave removes participant', psAfterLeave.length === 1);
   await cc.leaveAll();
   check('collab.leaveAll clears', cc !== undefined);
+
+  // msg-id uniqueness in tight loops (P3 fix)
+  const uniqRelay = makeRelay();
+  const uniqCc = createCollabClient(uniqRelay, 'uniq-me');
+  await uniqCc.host('U');
+  const receivedIds = [];
+  const uniqUnsub = await uniqCc.onMessage('session-1', (msg) => receivedIds.push(msg.id));
+  await uniqCc.sendChat('session-1', 'a');
+  await uniqCc.sendEdit('session-1', {});
+  await uniqCc.sendPresence('session-1', {});
+  await uniqUnsub();
+  check('collab msg-ids unique when broadcast observed', receivedIds.length === 3 && new Set(receivedIds).size === 3);
 })(); // end Sprint 4.3 IIFE
 
 rmSync(buildDir, { recursive: true, force: true });

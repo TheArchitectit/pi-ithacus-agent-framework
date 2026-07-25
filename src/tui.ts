@@ -106,7 +106,7 @@ export class TuiClient {
     for (const card of current) {
       const prev = previousIds.get(card.id);
       if (!prev) added.push(card);
-      else if (prev.body !== card.body || prev.title !== card.title || prev.collapsed !== card.collapsed) updated.push(card);
+      else if (prev.body !== card.body || prev.title !== card.title || prev.collapsed !== card.collapsed || prev.kind !== card.kind) updated.push(card);
     }
     const removed: string[] = previous.filter(c => !currentIds.has(c.id)).map(c => c.id);
     const diff: TuiDiff = {

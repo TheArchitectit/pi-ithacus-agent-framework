@@ -9,6 +9,12 @@
 
 import type { CollabSession, CollabParticipant, CollabMessage } from './types.js';
 
+/** Monotonic counter for unique message ids (avoids Date.now() collisions in tight loops). */
+let msgCounter = 0;
+function nextMsgId(): string {
+  return `msg-${Date.now()}-${++msgCounter}`;
+}
+
 /** Injectable collab relay transport. */
 export interface CollabRelay {
   /** Create a new collab session (returns the session with a token). */
@@ -60,17 +66,17 @@ export class CollabClient {
 
   /** Send a chat message. */
   async sendChat(sessionId: string, text: string): Promise<void> {
-    await this.relay.broadcast({ id: `msg-${Date.now()}`, sessionId, fromId: this.myId, kind: 'chat', payload: text, ts: Date.now() });
+    await this.relay.broadcast({ id: nextMsgId(), sessionId, fromId: this.myId, kind: 'chat', payload: text, ts: Date.now() });
   }
 
   /** Send an edit event. */
   async sendEdit(sessionId: string, edit: unknown): Promise<void> {
-    await this.relay.broadcast({ id: `msg-${Date.now()}`, sessionId, fromId: this.myId, kind: 'edit', payload: edit, ts: Date.now() });
+    await this.relay.broadcast({ id: nextMsgId(), sessionId, fromId: this.myId, kind: 'edit', payload: edit, ts: Date.now() });
   }
 
   /** Send a cursor/presence event. */
   async sendPresence(sessionId: string, cursor: unknown): Promise<void> {
-    await this.relay.broadcast({ id: `msg-${Date.now()}`, sessionId, fromId: this.myId, kind: 'cursor', payload: cursor, ts: Date.now() });
+    await this.relay.broadcast({ id: nextMsgId(), sessionId, fromId: this.myId, kind: 'cursor', payload: cursor, ts: Date.now() });
   }
 
   /** Subscribe to incoming messages. */
