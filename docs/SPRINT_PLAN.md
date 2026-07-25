@@ -432,6 +432,8 @@ As-needed sprints, each requires explicit approval.
 
 **Features**: 4.9 Dynamic workflows (.dwf.ts), 4.10 Scheduled runs
 
+**Status**: ✅ Complete (src/ pi-agnostic layer; extension wiring deferred)
+
 **Scope**: Script orchestration as code with trust model. Cron/interval/one-shot scheduling.
 
 **Dependencies**: TIER 1 async runs. Dynamic workflows need isolated-vm for security.

@@ -186,3 +186,40 @@ Sprints 3.1–3.2 (Weeks 15–18). Adds hindsight memory, web search providers
 - types.ts remains at 300/300 (zero headroom, untouched); Sprint 4.4 types live in the new `types-sprint-4.4.ts` split file and are imported directly.
 - ⚠️ `npm run build` (tsc) had 2 newly-introduced errors in src/ast.ts (TS2724 AstMatcher import, TS18047 m-null-de-narrow) — both fixed via inline interface + const capture; tsc now passes clean for ast.ts.
 - 573 smoke assertions pass (+56 new for Sprint 4.4: 20 DAP, 11 AST, 18 goal-loops, plus 7 type/structure checks); guardrails + regression checks clean.
+
+### Sprint 4.5 — Dynamic Workflows + Scheduled Runs — COMPLETE ✅
+
+**Scope delivered:** pi-agnostic src/ layer with injectable transports. Real isolated-vm sandboxing, .dwf.ts file loading (dynamic import), and real cron daemon wiring deferred to extensions/ (where PREVENT-ITH-004 exception annotations live if needed).
+
+| File | Lines | Purpose |
+|---|---|---|
+| src/dwf.ts | 119 | Dynamic workflow engine (feat 4.9): runDwf over injectable DwfDispatcher (spawnAgent/now); DwfWorkflow function-based contract (NO string eval in src/); trust model (trusted/under-review/untrusted — untrusted refused since no isolated-vm in src/); budget enforcement (maxAgents/maxFanOut/tokenBudget) + deadline; DwfContext with agent()/fanOut()/log()/budget; defineWorkflow helper |
+| src/scheduler.ts | 175 | Scheduler (feat 4.10): cron/interval/one-shot over injectable ScheduleClock (now/setTimeout/clearTimeout); minimal 5-field UTC cron parser (* and */N steps, single values, comma lists); maxRuns + deadline auto-cancel; cancelled re-check after task (race-safe re-arm); spec validation on register |
+| src/types-sprint-4.5.ts | 113 | Pure types (DwfTrustLevel/DwfBudget/DwfAgentResult/DwfFanOutResult/DwfContext/DwfWorkflow/DwfRunResult, ScheduleKind/ScheduleSpec/ScheduleStatus/ScheduleEntry) |
+
+- Two injectable transports: `DwfDispatcher` (agent spawn + clock) + `ScheduleClock` (now + timers). DI pattern mirrors lsp/dap/ast/goal-loops/collab/tui.
+- Dynamic workflows are function-based (DwfWorkflow.run) — src/ NEVER evals untrusted strings and NEVER imports isolated-vm (PREVENT-ITH-004). extensions/ loads .dwf.ts files via dynamic import and passes the run() fn; untrusted workflows are refused in src/ (require isolated-vm in extensions/).
+- Trust model: `untrusted` workflows refused outright in src/; `trusted`/`under-review` allowed. Budget + deadline enforced per agent() and fanOut() call.
+- Scheduler cron parser is a minimal 5-field UTC subset (`*`, `step/N`, single ints, comma lists) — full cron library injectable via extensions/.
+- Auto-cancel on maxRuns reached OR deadline exceeded; cancelled re-check after `await task()` closes the re-arm race; spec validation on register() rejects degenerate intervals/missing cron/atMs.
+- Zero network/process/IPC/TTY in src/ (PREVENT-ITH-004 — no annotation needed). Real isolated-vm, .dwf.ts loading, and cron daemon are extension-layer concerns.
+- types.ts remains at 300/300 (zero headroom, untouched); Sprint 4.5 types live in `types-sprint-4.5.ts`.
+- ⚠️ Audit caught 2 P0 parse/compile blockers (scheduler.ts JSDoc `*/N` closing the block comment early; smoke-src.mjs `dupThrew` top-level redeclaration) + 2 strip-types blockers (scheduler parameter-property constructor; ctx.log default level) — all fixed before commit.
+- 612 smoke assertions pass (+39 new for Sprint 4.5: 10 dwf, 14 scheduler, 7 cron parser, plus 8 type/structure/scheduling checks); tsc clean for the 3 new files; guardrails + regression checks clean.
+
+---
+
+## TIER 4 — Aspirational (v1.0+) — COMPLETE ✅
+
+All 5 TIER 4 sprints delivered (4.1 LSP, 4.2 Browser+Eval, 4.3 TUI+Collab, 4.4 DAP+AST+Goal-Loops, 4.5 DWF+Scheduler). Every sprint ships a pi-agnostic src/ layer with injectable transports; all real runtime wiring (LSP servers, Puppeteer/CDP, persistent eval, pi TUI, WebSocket collab, debug adapters, tree-sitter/ast-grep, LLM calls, isolated-vm, cron daemon) is deferred to extensions/ where PREVENT-ITH-004 exception annotations live.
+
+### TIER 4 cumulative
+
+| Layer | Files | Lines |
+|---|---|---|
+| `src/` (pi-agnostic, smoke-tested) | 52 | ~5,700 |
+| `extensions/` (pi adapter) | 9 | ~640 |
+| Smoke assertions | — | 612 |
+
+- All `src/` files ≤ 300 lines (types.ts at 300/300 zero-headroom; type additions split into `types-sprint-N.N.ts`).
+- The DI/injectable-transport pattern (LspTransport, BrowserDriver, EvalRuntime, TuiRenderer, CollabRelay, DapTransport, AstMatcher, LlmActor/LlmJudge, DwfDispatcher, ScheduleClock) is applied uniformly — every external dependency is injectable so src/ is fully unit-testable with mocks and zero runtime network.
