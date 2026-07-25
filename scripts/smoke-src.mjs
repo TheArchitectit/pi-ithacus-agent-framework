@@ -735,6 +735,9 @@ const reg2 = streamRules.createStreamRuleRegistry();
 const rcap = reg2.add({ pattern: 'function\\s+(\\w+)', flags: 'g', inject: 'Found function: $1' });
 const capInj = reg2.scan('function myFunc() {}');
 check('registry.scan captures', capInj[0]?.inject === 'Found function: myFunc');
+const regAmp = streamRules.createStreamRuleRegistry();
+regAmp.add({ pattern: 'function\\s+(\\w+)', flags: '', inject: 'Matched: $& Name: $1' });
+check('registry.scan expands $& full match', regAmp.scan('function myFunc() {}')[0]?.inject === 'Matched: function myFunc Name: myFunc');
 
 // functional helpers
 check('compileRule valid', streamRules.compileRule({ pattern: 'abc', flags: 'i' }) !== null);

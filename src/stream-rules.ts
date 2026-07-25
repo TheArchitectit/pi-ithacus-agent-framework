@@ -73,6 +73,8 @@ class StreamRuleRegistry {
       const m = text.match(re);
       if (!m) return rule.inject;
       let out = rule.inject;
+      // $& is the full-match alias (documented in types.ts StreamRule.inject).
+      out = out.replaceAll('$&', m[0]);
       m.forEach((cap, i) => {
         if (cap !== undefined) out = out.replaceAll(`$${i}`, cap);
       });
