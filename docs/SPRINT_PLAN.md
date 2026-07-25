@@ -333,25 +333,25 @@
 - 3.8 Plugin architecture
 
 **Deliverables**:
-- [ ] src/store.ts: events table for activity feed
-- [ ] src/store.ts: append agent actions with metadata
-- [ ] src/store.ts: query events by run/agent/action type
-- [ ] src/definitions.ts: user-defined agent configs (YAML/MD)
-- [ ] src/definitions.ts: user-defined team configs
-- [ ] src/definitions.ts: 3-layer discovery (builtin < user < project)
-- [ ] src/metrics.ts: metrics registry (counters, gauges, histograms)
-- [ ] src/metrics.ts: task-level duration/tokens tracking
-- [ ] src/metrics.ts: Prometheus export format
-- [ ] src/metrics.ts: OTLP export format
-- [ ] src/trim.ts: modify decideTrim() to preserve headings/fences
-- [ ] src/trim.ts: head+tail boundary detection
-- [ ] src/plugins.ts: plugin registry pattern
-- [ ] src/plugins.ts: hook into agent spawn
-- [ ] src/plugins.ts: framework-aware context injection
-- [ ] src/types.ts: ActivityEvent, AgentDefinition, MetricPoint, Plugin types
-- [ ] Unit tests for all new modules
-- [ ] Guardrails scan passes
-- [ ] Regression check passes
+- [x] src/store.ts: events table for activity feed
+- [x] src/store.ts: append agent actions with metadata
+- [x] src/store.ts: query events by run/agent/action type
+- [x] src/definitions.ts: user-defined agent configs (YAML/MD)
+- [x] src/definitions.ts: user-defined team configs
+- [x] src/definitions.ts: 3-layer discovery (builtin < user < project)
+- [x] src/metrics.ts: metrics registry (counters, gauges, histograms)
+- [x] src/metrics.ts: task-level duration/tokens tracking
+- [x] src/metrics.ts: Prometheus export format
+- [x] src/metrics.ts: OTLP export format
+- [x] src/trim.ts: modify decideTrim() to preserve headings/fences
+- [x] src/trim.ts: head+tail boundary detection
+- [x] src/plugins.ts: plugin registry pattern
+- [x] src/plugins.ts: hook into agent spawn
+- [x] src/plugins.ts: framework-aware context injection
+- [x] src/types.ts: ActivityEvent, AgentDefinition, MetricPoint, Plugin types
+- [x] Unit tests for all new modules
+- [x] Guardrails scan passes
+- [x] Regression check passes
 
 **Acceptance Criteria**:
 - Activity feed shows timeline of agent actions
