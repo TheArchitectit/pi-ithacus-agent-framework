@@ -210,19 +210,19 @@
 - 2.6 Skills auto-discovery
 
 **Deliverables**:
-- [ ] src/stream-rules.ts: regex-based rule definition
-- [ ] src/stream-rules.ts: mid-stream injection on pattern match
-- [ ] src/stream-rules.ts: compaction survival (rules persist)
-- [ ] src/config.ts: read Cursor MDC format
-- [ ] src/config.ts: read Cline .clinerules format
-- [ ] src/config.ts: read Codex AGENTS.md format
-- [ ] src/config.ts: read Copilot applyTo format
-- [ ] src/config.ts: read 4 additional formats (Aider, Continue, Cody, generic)
-- [ ] src/config.ts: 3-layer skill discovery (extension < user < project)
-- [ ] src/config.ts: SKILL.md validation
-- [ ] src/types.ts: StreamRule, ConfigFormat, SkillDefinition types
-- [ ] Unit tests for each config format parser, skill discovery, stream rules
-- [ ] Guardrails scan passes
+- [x] src/stream-rules.ts: regex-based rule definition
+- [x] src/stream-rules.ts: mid-stream injection on pattern match
+- [x] src/stream-rules.ts: compaction survival (rules persist)
+- [x] src/config.ts: read Cursor MDC format
+- [x] src/config.ts: read Cline .clinerules format
+- [x] src/config.ts: read Codex AGENTS.md format
+- [x] src/config.ts: read Copilot applyTo format
+- [x] src/config.ts: read 4 additional formats (Aider, Continue, Cody, generic)
+- [x] src/config.ts: 3-layer skill discovery (extension < user < project)
+- [x] src/config.ts: SKILL.md validation
+- [x] src/types.ts: StreamRule, ConfigFormat, SkillDefinition types
+- [x] Unit tests for each config format parser, skill discovery, stream rules
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - Stream rules fire on matching text mid-generation
