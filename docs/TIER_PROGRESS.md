@@ -150,3 +150,19 @@ Sprints 3.1–3.2 (Weeks 15–18). Adds hindsight memory, web search providers
 - Eval cells are per-client scoped: `list()` returns only this client's tracked cells (contract for extensions/ to respect).
 - 485 smoke assertions pass (cumulative through Sprint 4.2).
 - ⚠️ `types.ts` at 299/300 — future type additions must go into a new `types-sprint-N.N.ts` split file, not types.ts directly.
+
+### Sprint 4.3 — TUI + Collab Relay — COMPLETE ✅
+
+**Scope delivered:** pi-agnostic src/ TUI + collab clients (not the extension wiring).
+
+| File | Lines | Purpose |
+|---|---|---|
+| src/tui.ts | 174 | TuiClient over injectable TuiRenderer; differential rendering (add/update/remove + kind-only changes), edit previews, ask picker, QR codes |
+| src/collab.ts | 117 | CollabClient over injectable CollabRelay; host/join/leave, chat/edit/presence broadcast, subscribe, read-only link stub |
+| src/types-sprint-4.3.ts | 79 | Pure types (ToolCard, EditPreview, AskOption, QrCode, CollabParticipant, CollabSession, CollabMessage) |
+
+- Two injectable transports: `TuiRenderer` (differential-render surface) + `CollabRelay` (broadcast/subscribe). DI pattern mirrors lsp.ts/search.ts.
+- `renderDiff` computes minimal add/update/remove deltas, detecting kind-only ToolCard transitions (tool_call→tool_result) so the renderer always repaints lifecycle changes.
+- Collab msg-ids are monotonic (Date.now+counter) — no collisions in tight broadcast loops.
+- Zero network/IPC/TTY in src/ (PREVENT-ITH-004 — no annotation needed). Real WebSocket + pi TUI wiring deferred to extensions/ (where the PREVENT-ITH-004 exception annotation lives for collab relay).
+- ⚠️ `types.ts` now at 300/300 (zero headroom) — all future type additions MUST continue in new `types-sprint-N.N.ts` split files, never in types.ts directly.

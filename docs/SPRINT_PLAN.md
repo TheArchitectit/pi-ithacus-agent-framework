@@ -404,6 +404,8 @@ As-needed sprints, each requires explicit approval.
 
 **Features**: 4.4 TUI with differential rendering, 4.5 Collab relay
 
+**Status**: ✅ Complete (src/ pi-agnostic layer)
+
 **Scope**: Tool cards, edit previews, ask picker, QR codes. /collab with read-write/read-only links.
 
 **Dependencies**: TIER 3 complete. Requires pi TUI API. Collab needs PREVENT-ITH-004 exception.
