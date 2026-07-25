@@ -280,6 +280,13 @@ export type { RelevanceScore, HindsightEntry, SearchResult, SchemeResolution } f
 // ---- Activity Feed + Definitions + Metrics + Plugins (Sprint 3.2) — split out ----
 export type { ActivityEvent, AgentDefinition, TeamDefinition, MetricPoint, PluginHook, Plugin } from './types-sprint-3.2.js';
 
+// ---- LSP Integration (Sprint 4.1) — split out ----
+export type {
+  LspPosition, LspRange, LspTextDocumentIdentifier, LspDiagnostic, LspLocation,
+  LspSymbol, LspHover, LspSignatureHelp, LspCompletionItem, LspCodeAction,
+  LspTextEdit, LspFoldingRange, LspSelectionRange, LspSemanticTokens, LspMethod,
+} from './types-sprint-4.1.js';
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {
