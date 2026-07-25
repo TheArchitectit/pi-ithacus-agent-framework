@@ -133,3 +133,20 @@ Sprints 3.1–3.2 (Weeks 15–18). Adds hindsight memory, web search providers
 - Spec-compliant: `WorkspaceEdit` parsed via `{changes?, documentChanges?}` (flattenWorkspaceEdit); `LocationLink` normalized to `LspLocation`; `LspMethod` enum bijects to client methods (publishDiagnostics push-notif replaced by diagnostic pull-request).
 - 455 smoke assertions pass (cumulative through Sprint 4.1).
 - Real LSP server spawning (child_process/node:net) deferred to extensions/ — out of scope for this src/ sprint.
+
+### Sprint 4.2 — Browser + Persistent Eval — COMPLETE ✅
+
+**Scope delivered:** pi-agnostic src/ browser + eval clients (not the extension wiring).
+
+| File | Lines | Purpose |
+|---|---|---|
+| src/browser.ts | 132 | BrowserClient over injectable BrowserDriver; tabs, goto, evaluate, screenshot, click, type, snapshot, optional stealth |
+| src/eval.ts | 82 | EvalClient over injectable EvalRuntime; persistent cells + tool re-entry bridge |
+| src/types-sprint-4.2.ts | 95 | Pure types (BrowserTab, Screenshot, ElementSnapshot, NetworkEvent, EvalCell, EvalCellResult, ...) |
+
+- Two injectable transports: `BrowserDriver` (Puppeteer/CDP-shaped) + `EvalRuntime` (Python/Bun persistent cells). DI pattern mirrors lsp.ts LspTransport + search.ts FetchFn.
+- Zero network/process/IPC in src/ (PREVENT-ITH-004 — no annotation needed). Real Puppeteer/CDP/Bun/Python wiring deferred to extensions/.
+- Browser stealth mode is optional+guarded — driver throws if unsupported rather than silently degrading.
+- Eval cells are per-client scoped: `list()` returns only this client's tracked cells (contract for extensions/ to respect).
+- 485 smoke assertions pass (cumulative through Sprint 4.2).
+- ⚠️ `types.ts` at 299/300 — future type additions must go into a new `types-sprint-N.N.ts` split file, not types.ts directly.

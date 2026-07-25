@@ -390,6 +390,8 @@ As-needed sprints, each requires explicit approval.
 
 **Features**: 4.2 Browser automation, 4.3 Persistent eval
 
+**Status**: ✅ Complete (src/ pi-agnostic layer)
+
 **Scope**: Puppeteer/CDP tab management, stealth mode. Python+Bun persistent cells with tool re-entry bridge.
 
 **Dependencies**: TIER 3 complete. Requires process management infrastructure.
