@@ -2445,6 +2445,20 @@ check('sqliteTaskStore.count', sqlStore.count() === 2);
 check('sqliteTaskStore.list', sqlStore.list().length === 2);
 sqlStore.cancel(st2.id, 'nope');
 check('sqliteTaskStore.cancel', sqlStore.get(st2.id).status === 'cancelled');
+// Bug A: falsy input persisted
+const stF = sqlStore.create('falsy', 0);
+check('sqliteTaskStore falsy input=0 persisted', sqlStore.get(stF.id).input === 0);
+const stFb = sqlStore.create('falsyb', false);
+check('sqliteTaskStore falsy input=false persisted', sqlStore.get(stFb.id).input === false);
+const stFe = sqlStore.create('falsye', '');
+check('sqliteTaskStore falsy input="" persisted', sqlStore.get(stFe.id).input === '');
+// Bug B: update() persists input column
+const stU = sqlStore.create('updatable', { initial: 1 });
+sqlStore.update(stU.id, { input: { changed: true } });
+check('sqliteTaskStore update persists input', sqlStore.get(stU.id).input?.changed === true);
+// Bug A: update() falsy output persisted
+sqlStore.update(stU.id, { output: 0 });
+check('sqliteTaskStore update falsy output=0 persisted', sqlStore.get(stU.id).output === 0);
 db5.close();
 try { unlinkSync(dbPath5); } catch { /* cleanup */ }
 

@@ -73,7 +73,7 @@ export class SqliteTaskStore implements TaskStore {
   create(name: string, input?: unknown): TaskRecord {
     const id = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = Date.now();
-    this.db.prepare('INSERT INTO tasks (id,name,status,input,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(id, name, 'created', input ? JSON.stringify(input) : null, now, now);
+    this.db.prepare('INSERT INTO tasks (id,name,status,input,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(id, name, 'created', input === undefined ? null : JSON.stringify(input), now, now);
     return { ...this.get(id)!, input };
   }
   get(id: string): TaskRecord | undefined {
@@ -84,8 +84,8 @@ export class SqliteTaskStore implements TaskStore {
     const t = this.get(id);
     if (!t) return false;
     const updated = { ...t, ...patch, updatedAt: Date.now() };
-    this.db.prepare('UPDATE tasks SET status=?,agent_id=?,output=?,error=?,updated_at=?,completed_at=? WHERE id=?')
-      .run(updated.status, updated.agentId ?? null, updated.output ? JSON.stringify(updated.output) : null, updated.error ?? null, updated.updatedAt, updated.completedAt ?? null, id);
+    this.db.prepare('UPDATE tasks SET status=?,agent_id=?,input=?,output=?,error=?,updated_at=?,completed_at=? WHERE id=?')
+      .run(updated.status, updated.agentId ?? null, updated.input === undefined ? (t.input === undefined ? null : JSON.stringify(t.input)) : JSON.stringify(updated.input), updated.output === undefined ? null : JSON.stringify(updated.output), updated.error ?? null, updated.updatedAt, updated.completedAt ?? null, id);
     return true;
   }
   cancel(id: string, reason?: string): boolean { return this.update(id, { status: 'cancelled', error: reason, completedAt: Date.now() }); }
