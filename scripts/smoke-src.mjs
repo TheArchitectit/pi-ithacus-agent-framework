@@ -7,7 +7,7 @@
 // surgical string replace on `from "..."` / `import("...")` only). Then we
 // import the temp .ts directly, letting Node strip the types.
 
-import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -64,6 +64,8 @@ const { applyRewrite, findMatches, validateRewrite, chainRewrites, RegexAstMatch
 const { createGoalLoop, runGoalLoop, addStep, updateStep, stopGoalLoop, summarizeLoop } = await import(join(buildDir, 'goal-loops.ts'))
 const { runDwf, defineWorkflow } = await import(join(buildDir, 'dwf.ts'))
 const { Scheduler, createScheduler, nextCronFire, nextFire } = await import(join(buildDir, 'scheduler.ts'))
+const { WorkQueue, createWorkQueue } = await import(join(buildDir, 'queue.ts'))
+const { InMemoryTaskStore, SqliteTaskStore, createTaskStore, createSqliteTaskStore } = await import(join(buildDir, 'task-store.ts'))
 
 let failures = 0;
 function check(name, cond) {
@@ -2319,6 +2321,132 @@ check('nextFire one-shot', nextFire({ kind: 'one-shot', name: 'x', atMs: 9999 },
 let cronErr = false;
 try { nextCronFire('* * * *', 1000); } catch { cronErr = true; }
 check('cron.invalid field count rejected', cronErr);
+
+// ---- queue + task-store (Sprint 5.1) -------------------------------
+// === WorkQueue state machine ===
+const fakeClock5a = (() => { let t = 1000; return { now: () => t, _tick: (ms) => { t += ms; } }; })();
+const q = createWorkQueue(fakeClock5a);
+
+// add items
+const idA = q.addItem({ name: 'A', priority: 0 });
+const idB = q.addItem({ name: 'B', priority: 1, dependsOn: [idA] });
+const idC = q.addItem({ name: 'C', priority: 2, dependsOn: [idB] });
+check('queue.addItem returns id', idA === 1 && idB === 2 && idC === 3);
+check('queue.item A pending→next (no deps)', q.getItem(idA).status === 'next');
+check('queue.item B blocked (dep on A)', q.getItem(idB).status === 'blocked');
+check('queue.item C blocked (transitive)', q.getItem(idC).status === 'blocked');
+
+// checkDependencies
+const depsB = q.checkDependencies(idB);
+check('queue.checkDependencies B not met', depsB.met === false && depsB.pending.includes(idA));
+
+// getReadyItems returns A (status next, priority 0)
+const ready1 = q.getReadyItems(5);
+check('queue.getReadyItems returns A', ready1.length === 1 && ready1[0].name === 'A');
+check('queue.getReadyItems moves to now', q.getItem(idA).status === 'now');
+
+// complete A → B should advance blocked→next
+q.complete(idA, 'result A');
+check('queue.complete A done', q.getItem(idA).status === 'done' && q.getItem(idA).result === 'result A');
+check('queue.complete A advances B', q.getItem(idB).status === 'next');
+check('queue.complete A leaves C blocked (B not done)', q.getItem(idC).status === 'blocked');
+
+// claim next gets B
+const claimed = q.claimNext();
+check('queue.claimNext returns B', claimed.name === 'B');
+q.complete(idB, 'result B');
+check('queue.complete B advances C', q.getItem(idC).status === 'next');
+
+// fail an item
+const idD = q.addItem({ name: 'D', priority: 3 });
+q.fail(idD, 'boom');
+check('queue.fail sets failed+error', q.getItem(idD).status === 'failed' && q.getItem(idD).error === 'boom');
+
+// overdue detection
+fakeClock5a._tick(50000);
+const idE = q.addItem({ name: 'E', priority: 1, deadlineMs: 5000 });
+fakeClock5a._tick(10000);  // now past deadline
+const overdue = q.overdueItems();
+check('queue.overdueItems detects', overdue.length >= 1 && overdue.some(i => i.name === 'E'));
+
+// stats
+const stats = q.stats();
+check('queue.stats total', stats.total === 5);
+check('queue.stats byStatus done', stats.byStatus['done'] === 2);
+
+// audit log
+const log = q.getLog();
+check('queue.getLog has entries', log.length > 0);
+check('queue.getLog add entry', log.some(e => e.action === 'add'));
+
+// checkpoint save+restore
+const cp = q.saveCheckpoint();
+check('queue.saveCheckpoint doneCount', cp.doneCount === 2);
+const q2 = createWorkQueue();
+q2.restoreCheckpoint(cp);
+check('queue.restoreCheckpoint items', q2.getItems().length === 5 && q2.getItem(idA).status === 'done');
+
+// priority ordering
+const qP = createWorkQueue();
+qP.addItem({ name: 'low', priority: 3 });
+qP.addItem({ name: 'high', priority: 0 });
+qP.addItem({ name: 'mid', priority: 1 });
+const readyP = qP.getReadyItems(3);
+check('queue.priority ordering (high first)', readyP[0].name === 'high' && readyP[1].name === 'mid' && readyP[2].name === 'low');
+
+// === TaskStore (in-memory) ===
+const ts = createTaskStore();
+const t1 = ts.create('build feature', { spec: 'do X' });
+check('taskStore.create returns record', t1.id === 'task-1' && t1.status === 'created');
+check('taskStore.get', ts.get(t1.id).name === 'build feature');
+
+// update
+ts.update(t1.id, { status: 'running', agentId: 'agent-7' });
+check('taskStore.update status+agent', ts.get(t1.id).status === 'running' && ts.get(t1.id).agentId === 'agent-7');
+
+// complete
+ts.update(t1.id, { status: 'completed', output: { result: 'ok' }, completedAt: Date.now() });
+check('taskStore.update complete', ts.get(t1.id).status === 'completed' && ts.get(t1.id).output?.result === 'ok');
+
+// cancel
+const t2 = ts.create('abort me');
+ts.cancel(t2.id, 'user aborted');
+check('taskStore.cancel', ts.get(t2.id).status === 'cancelled' && ts.get(t2.id).error === 'user aborted');
+
+// list with filter
+const t3 = ts.create('running task'); ts.update(t3.id, { status: 'running' });
+const running = ts.list({ status: 'running' });
+check('taskStore.list filter status', running.length === 1 && running[0].name === 'running task');
+
+const t4 = ts.create('agent task'); ts.update(t4.id, { status: 'running', agentId: 'a-1' });
+const byAgent = ts.list({ agentId: 'a-1' });
+check('taskStore.list filter agent', byAgent.length === 1 && byAgent[0].agentId === 'a-1');
+
+// count
+check('taskStore.count', ts.count() === 4);
+
+// get unknown
+check('taskStore.get unknown', ts.get('nope') === undefined);
+check('taskStore.update unknown false', ts.update('nope', { status: 'failed' }) === false);
+
+// === TaskStore (SQLite) ===
+const { DatabaseSync } = await import('node:sqlite');
+const dbPath5 = join(buildDir, 'test-task-store.db');
+try { unlinkSync(dbPath5); } catch { /* may not exist */ }
+const db5 = new DatabaseSync(dbPath5);
+const sqlStore = createSqliteTaskStore(db5);
+const st1 = sqlStore.create('sql task', { data: 42 });
+check('sqliteTaskStore.create', st1.id.startsWith('task-') && st1.status === 'created');
+check('sqliteTaskStore.get', sqlStore.get(st1.id).name === 'sql task');
+sqlStore.update(st1.id, { status: 'completed', output: { ok: true }, completedAt: 9999 });
+check('sqliteTaskStore.update', sqlStore.get(st1.id).status === 'completed' && sqlStore.get(st1.id).output?.ok === true);
+const st2 = sqlStore.create('another');
+check('sqliteTaskStore.count', sqlStore.count() === 2);
+check('sqliteTaskStore.list', sqlStore.list().length === 2);
+sqlStore.cancel(st2.id, 'nope');
+check('sqliteTaskStore.cancel', sqlStore.get(st2.id).status === 'cancelled');
+db5.close();
+try { unlinkSync(dbPath5); } catch { /* cleanup */ }
 
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });
