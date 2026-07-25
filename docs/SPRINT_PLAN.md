@@ -91,20 +91,20 @@
 - 1.7 Cost reporting
 
 **Deliverables**:
-- [ ] src/presence.ts: SQLite-backed agent status registry
-- [ ] src/presence.ts: heartbeat (configurable interval, default 10s)
-- [ ] src/presence.ts: stuck detection (no heartbeat = stuck)
-- [ ] extensions/ithacus-presence.ts: join/leave/heartbeat hooks
-- [ ] src/reservations.ts: claim file paths via SQLite
-- [ ] src/reservations.ts: block conflicting writes on write/edit
-- [ ] src/reservations.ts: release on agent completion
-- [ ] src/cost.ts: track input/output tokens per agent
-- [ ] src/cost.ts: calculate cost per role and per run
-- [ ] src/cost.ts: surface in team summary output
-- [ ] src/types.ts: AgentPresence, FileReservation, CostSummary types
-- [ ] src/store.ts: ith_presence, ith_reservations, ith_costs tables
-- [ ] Unit tests for presence, reservations, cost calculation
-- [ ] Guardrails scan passes
+- [x] src/presence.ts: SQLite-backed agent status registry
+- [x] src/presence.ts: heartbeat (configurable interval, default 10s)
+- [x] src/presence.ts: stuck detection (no heartbeat = stuck)
+- [x] extensions/ithacus-presence.ts: join/leave/heartbeat hooks
+- [x] src/reservations.ts: claim file paths via SQLite
+- [x] src/reservations.ts: block conflicting writes on write/edit
+- [x] src/reservations.ts: release on agent completion
+- [x] src/cost.ts: track input/output tokens per agent
+- [x] src/cost.ts: calculate cost per role and per run
+- [x] src/cost.ts: surface in team summary output
+- [x] src/types.ts: AgentPresence, FileReservation, CostSummary types
+- [x] src/store.ts: ith_presence, ith_reservations, ith_costs tables
+- [x] Unit tests for presence, reservations, cost calculation
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - Agent status shows as active/stuck/idle/complete
