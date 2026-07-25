@@ -287,6 +287,7 @@ export type {
   LspTextEdit, LspFoldingRange, LspSelectionRange, LspSemanticTokens, LspMethod,
 } from './types-sprint-4.1.js';
 
+export type { BrowserTab, GotoOptions, ElementSelector, Screenshot, ElementSnapshot, NetworkEvent, EvalResult, EvalCell, EvalCellResult } from './types-sprint-4.2.js'; // Sprint 4.2
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {
