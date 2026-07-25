@@ -176,16 +176,16 @@
 - 2.3 Checkpoint/Rewind
 
 **Deliverables**:
-- [ ] src/hashline.ts: content-hash anchored edit format
-- [ ] src/hashline.ts: hash computation from file content
-- [ ] src/hashline.ts: stale-anchor recovery (find nearest match)
-- [ ] src/hashline.ts: conversion to/from pi's native edit format
-- [ ] src/checkpoint.ts: mark checkpoint in conversation
-- [ ] src/checkpoint.ts: prune exploratory context after checkpoint
-- [ ] src/checkpoint.ts: keep concise summary report
-- [ ] src/types.ts: HashlineEdit, Checkpoint, CheckpointSummary types
-- [ ] Unit tests for hashline parsing, anchor matching, checkpoint creation
-- [ ] Guardrails scan passes
+- [x] src/hashline.ts: content-hash anchored edit format
+- [x] src/hashline.ts: hash computation from file content
+- [x] src/hashline.ts: stale-anchor recovery (find nearest match)
+- [x] src/hashline.ts: conversion to/from pi's native edit format
+- [x] src/checkpoint.ts: mark checkpoint in conversation
+- [x] src/checkpoint.ts: prune exploratory context after checkpoint
+- [x] src/checkpoint.ts: keep concise summary report
+- [x] src/types.ts: HashlineEdit, Checkpoint, CheckpointSummary types
+- [x] Unit tests for hashline parsing, anchor matching, checkpoint creation
+- [x] Guardrails scan passes
 
 **Acceptance Criteria**:
 - Hashline edit produces correct file modification
