@@ -172,6 +172,54 @@ export interface CostSummary {
   entryCount: number;
 }
 
+// ---- Model Profile types (Sprint 1.4) ----
+
+export type ProfileTier = 'speed' | 'quality' | 'reasoning' | 'code' | 'local';
+
+/** A reusable model profile: primary model + fallbacks + cost multiplier. */
+export interface ModelProfile {
+  id: string;
+  name: string;
+  tier: ProfileTier;
+  model: string;
+  fallbackModels: string[];
+  description: string;
+  /** Relative cost multiplier vs the baseline (1.0 = standard). */
+  costMultiplier: number;
+  isBuiltIn: boolean;
+  createdAt: number;
+}
+
+/** Per-role profile assignment for a team run. */
+export interface TeamModelAssignment {
+  runId: string;
+  role: AgentRole;
+  profileId: string;
+  model: string;
+  createdAt: number;
+}
+
+// ---- Reverse Prompt Validation types (Sprint 1.4) ----
+
+/** A single dimension scored by the validator. */
+export interface ScoredDimension {
+  name: string;
+  score: number;       // 0-100
+  feedback: string;
+}
+
+/** Full validation report produced by validatePrompt(). */
+export interface ValidationReport {
+  prompt: string;
+  dimensions: ScoredDimension[];
+  overallScore: number;          // average of dimension scores
+  passed: boolean;               // overallScore >= threshold AND not safety-blocked
+  safetyBlocked: boolean;       // safety < 30 hard-blocks execution
+  recommendedProfile: ProfileTier;
+  recommendedTeamSize: number;   // 1-6
+  summary: string;
+}
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {

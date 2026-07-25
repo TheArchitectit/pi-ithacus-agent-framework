@@ -12,7 +12,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type IthRuntime } from "./ithacus-runtime.js";
 import { type IthacusConfig } from "../src/config.js";
 import { createTeam, deleteTeam, teamStatus } from "./ithacus-team.js";
-import type { ModePreset, ResolvedModel } from "../../src/team.js";
+import type { ModePreset, ResolvedModel } from "../src/team.js";
+import { ensureProfiles, buildProfileSelectionPrompt } from "./ithacus-profiles.js";
+import { validatePrompt } from "../src/validator.js";
 
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
@@ -51,6 +53,11 @@ export function registerTeamCommands(
       ? mode
       : "medium") as ModePreset;
     const prompt = rest.join(" ") || "Investigate this repository and report findings.";
+    // Sprint 1.4 RPV: validate before creating a team.
+    const report = validatePrompt(prompt);
+    if (report.safetyBlocked) {
+      return `ithacus: prompt BLOCKED by safety validation.\n${report.summary}`;
+    }
     const res = await createTeam({
       pi,
       runtime,
@@ -85,6 +92,18 @@ export function registerTeamCommands(
     if (!mems.length) return "ithacus: no memories recorded for this repo.";
     return mems.map((m) => `[${m.kind}] ${m.text}`).join("\n");
   });
+
+  pi.registerCommand("ithacus-profiles", async (_args, ctx) => {
+    runtime.bindRepo(ctx.cwd);
+    const ps = ensureProfiles(runtime);
+    const profiles = ps.listProfiles();
+    return buildProfileSelectionPrompt(profiles);
+  });
+
+  // Validation gate: wraps createTeam so /ithacus-team validates first.
+  (runtime as any).validateTeamPrompt = (prompt: string) => {
+    return validatePrompt(prompt);
+  };
 
   // Expose deleteTeam for programmatic use.
   (runtime as any).deleteTeam = (runId: string) => deleteTeam(runtime, runId);

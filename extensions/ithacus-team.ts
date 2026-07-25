@@ -16,7 +16,9 @@ import {
   buildModelChain,
   type ResolvedModel,
 } from "../src/team.js";
-import type { IthAgent } from "../src/types.js";
+import type { IthAgent, ModelProfile } from "../src/types.js";
+import { ensureProfiles, parseProfileSelection } from "./ithacus-profiles.js";
+import { resolveProfile, assignRoleProfile } from "../src/model-profiles.js";
 
 function genId(prefix: string): string {
   // Date.now/Math.random are unavailable in some sandboxes; use a counter + ms.
@@ -41,6 +43,8 @@ export async function createTeam(opts: {
   mode: ModePreset;
   prompt: string;
   resolved: ResolvedModel;
+  /** Sprint 1.4: optional profile override (id string, raw object, or null). */
+  profileOverride?: ModelProfile | string | null;
 }): Promise<SpawnResult> {
   const runId = genId("run");
   const now = Date.now();
@@ -52,6 +56,25 @@ export async function createTeam(opts: {
     fallbackModels: opts.config.fallbackModels,
     now,
   });
+
+  // Sprint 1.4: per-role profile assignment when a profile is selected.
+  if (opts.profileOverride) {
+    const ps = ensureProfiles(opts.runtime);
+    const profiles = ps.listProfiles();
+    const selected = typeof opts.profileOverride === 'string'
+      ? parseProfileSelection(opts.profileOverride, profiles)
+      : opts.profileOverride;
+    if (selected) {
+      // Apply the selected profile's model to each agent, with role-based
+      // assignment (e.g. Explorer=Speed, Reviewer=Quality).
+      for (const a of plan.agents) {
+        const profile = resolveProfile(ps, { explicit: selected.id, role: a.role, runId });
+        a.model = profile.model;
+        a.provider = opts.resolved.provider;
+        assignRoleProfile(ps, { runId, role: a.role, profileId: profile.id });
+      }
+    }
+  }
 
   // Persist run + roster.
   opts.runtime.store.createRun(plan.run);

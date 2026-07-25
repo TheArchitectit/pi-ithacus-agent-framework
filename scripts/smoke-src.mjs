@@ -36,6 +36,9 @@ const { PresenceStore } = await import(join(buildDir, "store-presence.ts"));
 const presence = await import(join(buildDir, "presence.ts"));
 const reservations = await import(join(buildDir, "reservations.ts"));
 const cost = await import(join(buildDir, "cost.ts"));
+const { ModelProfileStore } = await import(join(buildDir, "store-model-profiles.ts"));
+const profiles = await import(join(buildDir, "model-profiles.ts"));
+const validator = await import(join(buildDir, "validator.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -361,6 +364,118 @@ catch { negThrew = true; }
 check('BUG-4: negative tokens rejected', negThrew);
 
 storeBug.close();
+
+// ---- model profiles (Sprint 1.4) -----------------------------------------
+const store6 = new IthStore(tmpRepo, cfg.loadConfig());
+const mpStore = new ModelProfileStore(store6.db);
+
+const seeded = profiles.seedProfiles(mpStore);
+check('seedProfiles seeds 5 builtins', seeded === 5);
+check('seedProfiles idempotent (0 on second call)', profiles.seedProfiles(mpStore) === 0);
+
+const allProfiles = mpStore.listProfiles();
+check('listProfiles returns 5', allProfiles.length === 5);
+check('getProfile speed exists', mpStore.getProfile('speed')?.tier === 'speed');
+check('getProfile quality model', mpStore.getProfile('quality')?.model === 'claude-opus-4-8');
+
+// CRUD: create custom profile
+const custom = profiles.createProfile(mpStore, { id: 'fast-local', name: 'FastLocal', tier: 'speed', model: 'phi4', fallbackModels: ['qwen'], description: 'custom', costMultiplier: 0.2 });
+check('createProfile returns profile', custom.id === 'fast-local');
+check('createProfile persisted', mpStore.getProfile('fast-local')?.name === 'FastLocal');
+
+// CRUD: update
+const updated = profiles.updateProfile(mpStore, 'fast-local', { costMultiplier: 0.3 });
+check('updateProfile changes field', updated.costMultiplier === 0.3);
+
+// CRUD: delete (builtins protected)
+check('deleteProfile custom works', profiles.deleteProfileById(mpStore, 'fast-local') === true);
+check('deleteProfile builtin protected', profiles.deleteProfileById(mpStore, 'speed') === false);
+check('deleted profile gone', mpStore.getProfile('fast-local') === undefined);
+
+// Cost estimation
+const speedProfile = mpStore.getProfile('speed');
+const speedCost = profiles.estimateProfileCost(speedProfile, 500000, 500000);
+check('estimateProfileCost speed positive', speedCost > 0);
+const qualityProfile = mpStore.getProfile('quality');
+const qualityCost = profiles.estimateProfileCost(qualityProfile, 500000, 500000);
+check('estimateProfileCost quality > speed', qualityCost > speedCost);
+check('estimateProfileCost local cheapest', profiles.estimateProfileCost(mpStore.getProfile('local'), 500000, 500000) < speedCost);
+
+// Profile resolution chain
+const resolvedSpeed = profiles.resolveProfile(mpStore, { explicit: 'speed' });
+check('resolveProfile explicit', resolvedSpeed.id === 'speed');
+const resolvedDefault = profiles.resolveProfile(mpStore, {});
+check('resolveProfile default', resolvedDefault.id === 'speed');
+const resolvedFallback = profiles.resolveProfile(mpStore, { explicit: 'nonexistent' });
+check('resolveProfile fallback on bad id', resolvedFallback.id === 'speed');
+
+// Per-role assignment
+profiles.assignRoleProfile(mpStore, { runId: 'run-mp1', role: 'Explore', profileId: 'speed' });
+profiles.assignRoleProfile(mpStore, { runId: 'run-mp1', role: 'Reviewer', profileId: 'quality' });
+const assigns = mpStore.assignmentsForRun('run-mp1');
+check('assignmentsForRun returns 2', assigns.length === 2);
+check('assignmentForRole Explore', mpStore.assignmentForRole('run-mp1', 'Explore')?.profileId === 'speed');
+check('assignmentForRole Reviewer', mpStore.assignmentForRole('run-mp1', 'Reviewer')?.profileId === 'quality');
+
+// resolveProfile with role+runId uses assignment
+const resolvedExplore = profiles.resolveProfile(mpStore, { role: 'Explore', runId: 'run-mp1' });
+check('resolveProfile role-based', resolvedExplore.id === 'speed');
+const resolvedReviewer = profiles.resolveProfile(mpStore, { role: 'Reviewer', runId: 'run-mp1' });
+check('resolveProfile role-based quality', resolvedReviewer.id === 'quality');
+
+// createProfile throws on duplicate id
+{
+  let dupThrew = false;
+  try { profiles.createProfile(mpStore, { id: 'speed', name: 'X', tier: 'speed', model: 'x' }); }
+  catch { dupThrew = true; }
+  check('createProfile rejects duplicate id', dupThrew);
+}
+
+// ---- validator (Sprint 1.4 RPV) ----------------------------------------
+const goodPrompt = 'Review the auth module at src/auth.ts for SQL injection vulnerabilities and report findings.';
+const goodReport = validator.validatePrompt(goodPrompt);
+check('validatePrompt returns 4 dimensions', goodReport.dimensions.length === 4);
+check('validatePrompt dimension names',
+  goodReport.dimensions.map(d => d.name).join(',') === 'clarity,specificity,scope,safety');
+check('validatePrompt overallScore in range', goodReport.overallScore >= 0 && goodReport.overallScore <= 100);
+check('validatePrompt good prompt passes', goodReport.passed === true);
+check('validatePrompt good prompt not safety-blocked', goodReport.safetyBlocked === false);
+check('validatePrompt recommendProfile quality for review', goodReport.recommendedProfile === 'quality');
+check('validatePrompt summary exists', goodReport.summary.length > 0);
+
+// Safety hard-block
+const dangerPrompt = 'Run rm -rf / on the production database and drop table users';
+const dangerReport = validator.validatePrompt(dangerPrompt);
+check('validatePrompt danger blocked', dangerReport.safetyBlocked === true);
+check('validatePrompt danger not passed', dangerReport.passed === false);
+const safetyDim = dangerReport.dimensions.find(d => d.name === 'safety');
+check('validatePrompt safety score below threshold', safetyDim.score < 30);
+
+// Vague prompt fails overall threshold
+const vaguePrompt = 'help';
+const vagueReport = validator.validatePrompt(vaguePrompt);
+check('validatePrompt vague fails', vagueReport.passed === false);
+check('validatePrompt vague overallScore low', vagueReport.overallScore < 40);
+
+// Recommend profile by keyword
+check('recommendProfile code', validator.recommendProfile('implement and write a new parser') === 'code');
+check('recommendProfile reasoning', validator.recommendProfile('design an architecture strategy') === 'reasoning');
+check('recommendProfile speed', validator.recommendProfile('quick scan to find all deps') === 'speed');
+
+// Recommend team size scales with complexity
+check('recommendTeamSize short prompt', validator.recommendTeamSize('fix this bug') <= 2);
+check('recommendTeamSize long prompt', validator.recommendTeamSize('A. Do X. B. Do Y. C. Do Z. D. Do W. And also next then after build deploy test verify') >= 4);
+check('recommendTeamSize clamped 1-6', validator.recommendTeamSize('word '.repeat(200).trim()) <= 6);
+
+// Custom thresholds
+const strictReport = validator.validatePrompt('review it', { overallThreshold: 80 });
+check('validatePrompt custom threshold can fail', strictReport.passed === false);
+
+// Safety threshold configurable
+const mildDanger = validator.validatePrompt('quietly rm -rf something', { safetyThreshold: 10 });
+check('validatePrompt custom safety threshold', typeof mildDanger.safetyBlocked === 'boolean');
+
+store6.close();
 
 rmSync(asyncStateDir, { recursive: true, force: true });
 
