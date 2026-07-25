@@ -122,6 +122,38 @@ Requires platform-level changes, significant effort, or upstream Pi API extensio
 
 ---
 
+### TIER 5 — Advanced Swarm Workflows (v1.1+, future)
+
+Closes every agent-workflow gap found across radcode, radical, and memory-mcp. ithacus stays purely agent-workflow orchestration (no memory/KG/RAG — separate project). src/ stays pi-agnostic + zero-network; real A2A networking lives in extensions/ (Sprint 5.9, PREVENT-ITH-004 exception).
+
+| # | Feature | Effort | Blocks | Notes |
+|---|---|---|---|---|
+| 4.11 | **Priority work-queue state machine** | M (1 week) | — | P0-P3, INGRESS→NEXT→NOW→DONE/FAILED, per-item deps. memory-mcp pattern. |
+| 4.12 | **Task lifecycle store** | M (1 week) | 4.11 | create/get/update/cancel/list/count + TaskStore ABC + SQLite impl. |
+| 4.13 | **DAG step retry/timeout/on_error** | L (1-2 weeks) | — | Per-step retry_count, asyncio.wait_for-style timeout, on_error routing. |
+| 4.14 | **Rich step types** | L (1-2 weeks) | 4.13 | CONDITION/LOOP/HUMAN_REVIEW/SUBWORKFLOW + YAML templates. |
+| 4.15 | **YAML workflow templates** | M (1 week) | 4.14 | Template loader + entry-point walker. |
+| 4.16 | **Inter-agent negotiation protocol** | L (1-2 weeks) | 4.12 | TaskOffer/Accept/Reject/Counter, ResourceRequest/Grant/Deny. In-process. |
+| 4.17 | **Agent handoff protocol** | M (1 week) | 4.12 | HandoffReason/Priority + capability-based routing. |
+| 4.18 | **Swarm dispatch loop** | L (1 week) | 4.11, 4.13 | Priority-ordered, blocked-wait, checkpoint-every-N. |
+| 4.19 | **Result synthesis engine** | L (1 week) | 4.18 | Attribution + conflict resolution + scoring. |
+| 4.20 | **Structured WorkflowResult** | S (0.5 week) | 4.18 | tasks[], total_time, final_output, errors[]. |
+| 4.21 | **Hive filesystem convention** | M (1 week) | 4.18 | .pi/ithacus/ structured dirs (hive_mind/LOCKS, communication/inbox/handoffs, workspaces/<role>, artifacts, audit). |
+| 4.22 | **Token-budget governor** | M (1 week) | — | USD cap + 50%/90% alerts + refuse-to-exceed. Upgrade cost.ts. |
+| 4.23 | **Capability-based leader election** | L (1 week) | 4.12 | LeaderElection::CapabilityBased + DelegationPattern. |
+| 4.24 | **Keyword→role task router** | M (1 week) | 4.12 | Weighted keyword→role(s) routing. |
+| 4.25 | **Swarm messaging bus** | L (1-2 weeks) | 4.18 | In-process pub/sub blackboard. |
+| 4.26 | **Named recovery protocol** | M (1 week) | 4.25 | Phoenix-style structured failure-recovery states. |
+| 4.27 | **Distributed task claiming** | M (1 week) | 4.11 | Leases + stale-expiry. SQLite-based. |
+| 4.28 | **Priority deadline queue** | S (0.5 week) | 4.11 | pop_highest_priority/pop_earliest_deadline/overdue_tasks. |
+| 4.29 | **SprintTracker** | S (0.5 week) | 4.22 | sprint/status/tasks/token-metrics/file-mod tracking. |
+| 4.30 | **52-week planning scheduler** | M (1 week) | 4.29 | Dependency-aware auto-scheduling + Gantt. |
+| 4.31 | **A2A protocol adapter** | XL (2-3 weeks) | 4.16,4.17,4.25 | extensions/ — HTTP/JSON-RPC, SSE, HMAC webhooks, Agent Card, Federation. PREVENT-ITH-004 exception. |
+
+**TIER 5 total**: ~10 new files, ~2,000 additional lines, ~10-14 weeks.
+
+---
+
 ## New File Map
 
 | File | Tier | Lines (est.) | Purpose |
@@ -148,6 +180,20 @@ Requires platform-level changes, significant effort, or upstream Pi API extensio
 | `src/metrics.ts` | T3 | ~80 | Metrics registry and export hooks |
 | `src/plugins.ts` | T3 | ~60 | Plugin registry for framework context injection |
 | `src/definitions.ts` | T3 | ~80 | Custom agent/team/workflow definitions |
+| `src/queue.ts` | T5 | ~200 | Priority work-queue state machine (P0-P3, deps, get_ready_items) |
+| `src/workflow-yaml.ts` | T5 | ~150 | YAML workflow template loader + StepType enum |
+| `src/negotiation.ts` | T5 | ~150 | TaskOffer/Accept/Reject/Counter, ResourceRequest/Grant/Deny |
+| `src/handoff.ts` | T5 | ~120 | HandoffReason/Priority + capability routing |
+| `src/swarm.ts` | T5 | ~200 | Swarm dispatch loop + hive filesystem convention |
+| `src/synthesis.ts` | T5 | ~150 | Attribution + conflict resolution + scoring |
+| `src/budget.ts` | T5 | ~120 | Token-budget governor (USD cap + alerts + refuse) |
+| `src/leader.ts` | T5 | ~120 | Capability-based leader election + delegation |
+| `src/router.ts` | T5 | ~120 | Keyword→role weighted task router |
+| `src/bus.ts` | T5 | ~150 | In-process messaging bus / blackboard pub/sub |
+| `src/recovery.ts` | T5 | ~120 | Named failure-recovery protocol (Phoenix-style) |
+| `src/claiming.ts` | T5 | ~120 | Distributed task claiming w/ leases + stale-expiry |
+| `src/sprint-tracker.ts` | T5 | ~150 | Sprint/status/tasks/token-metrics/file-mod tracking |
+| `extensions/ithacus-a2a.ts` | T5 | ~200 | A2A network adapter (PREVENT-ITH-004 exception) |
 
 ---
 

@@ -442,6 +442,102 @@ As-needed sprints, each requires explicit approval.
 
 ---
 
+## TIER 5 — Advanced Swarm Workflows (Future, 10-14 weeks)
+
+Goal: close every agent-workflow gap found across radcode, radical, and memory-mcp. ithacus is purely agent-workflow orchestration (no memory/KG/RAG — separate project). All src/ modules stay pi-agnostic + zero-network (PREVENT-ITH-004); real network A2A lives in extensions/ (Sprint 5.9).
+
+### Sprint 5.1 — Priority Work Queue + Task Lifecycle Store (2 weeks)
+
+**Features**: 4.11 Priority work-queue state machine, 4.12 Task lifecycle store
+
+**Scope**: `src/queue.ts` — priority state machine (P0-P3, INGRESS→NEXT→NOW→DONE/FAILED), per-item `depends_on` gating, `get_ready_items`, `get_items(status)`, dependency resolution. Upgrade `team.ts`: task lifecycle (create/get/update/cancel/list/count) + TaskStore ABC + pluggable impls (SQLite-default).
+
+**Dependencies**: TIER 1 workflow.ts, team.ts.
+
+**Approval required**: Yes
+
+### Sprint 5.2 — DAG Step Control + Rich Step Types + YAML (2 weeks)
+
+**Features**: 4.13 Step retry/timeout/on_error, 4.14 CONDITION/LOOP/HUMAN_REVIEW/SUBWORKFLOW step types, 4.15 YAML workflow templates
+
+**Scope**: Upgrade `workflow.ts` — WorkflowStep with retry_count/timeout/on_error routing. New `src/workflow-yaml.ts` — YAML template loader + entry-point walker, StepType enum.
+
+**Dependencies**: Sprint 5.1.
+
+**Approval required**: Yes
+
+### Sprint 5.3 — Inter-Agent Negotiation + Handoff (1-2 weeks)
+
+**Features**: 4.16 Negotiation protocol (TaskOffer/Accept/Reject/Counter, ResourceRequest/Grant/Deny), 4.17 Agent handoff (HandoffReason/Priority + capability routing)
+
+**Scope**: `src/negotiation.ts`, `src/handoff.ts`. In-process (zero-network).
+
+**Dependencies**: Sprint 5.1.
+
+**Approval required**: Yes
+
+### Sprint 5.4 — Swarm Dispatch Loop + Result Synthesis + Hive FS (2 weeks)
+
+**Features**: 4.18 Swarm dispatch (priority-ordered, blocked-wait, checkpoint-every-N), 4.19 Result synthesis (attribution/conflict/scoring), 4.20 Structured WorkflowResult, 4.21 .pi/ithacus/ hive filesystem convention
+
+**Scope**: `src/swarm.ts` (dispatch loop + hive dirs: 00_hive_mind/LOCKS, 10_communication/inbox/handoffs, 20_workspaces/<role>, 30_artifacts, 90_audit, 99_system). `src/synthesis.ts`.
+
+**Dependencies**: Sprints 5.1, 5.2.
+
+**Approval required**: Yes
+
+### Sprint 5.5 — Budget Governor + Leader Election + Keyword Router (2 weeks)
+
+**Features**: 4.22 Token-budget governor (USD cap + 50%/90% alerts + refuse-to-exceed), 4.23 Capability-based leader election + delegation, 4.24 Keyword→role weighted task router
+
+**Scope**: Upgrade `cost.ts` → `src/budget.ts`. `src/leader.ts`. `src/router.ts`.
+
+**Dependencies**: TIER 1 cost.ts, Sprint 5.1.
+
+**Approval required**: Yes
+
+### Sprint 5.6 — In-Process Messaging Bus + Recovery Protocol (1-2 weeks)
+
+**Features**: 4.25 Swarm messaging bus / blackboard (in-process pub/sub), 4.26 Named failure-recovery protocol (Phoenix-style structured states)
+
+**Scope**: `src/bus.ts`. `src/recovery.ts`.
+
+**Dependencies**: Sprint 5.4.
+
+**Approval required**: Yes
+
+### Sprint 5.7 — Distributed Task Claiming + Deadline Queue (1-2 weeks)
+
+**Features**: 4.27 Distributed task claiming with leases + stale-expiry, 4.28 Priority queue with deadlines (pop_highest_priority/pop_earliest_deadline/overdue_tasks)
+
+**Scope**: `src/claiming.ts`. Upgrade `queue.ts` (deadline ops). SQLite-based (extensible to multi-node via extensions/).
+
+**Dependencies**: Sprint 5.1.
+
+**Approval required**: Yes
+
+### Sprint 5.8 — Project Tracking + Long-Horizon Planning (1 week)
+
+**Features**: 4.29 SprintTracker (sprint/status/tasks/token-metrics/file-mod), 4.30 52-week planning scheduler + Gantt-style dependency-aware auto-scheduling
+
+**Scope**: `src/sprint-tracker.ts`. Upgrade `scheduler.ts` (52-week + Gantt). Deferred execution.
+
+**Dependencies**: TIER 1 scheduler.ts, Sprint 5.5.
+
+**Approval required**: Yes
+
+### Sprint 5.9 — A2A Protocol Adapter (extensions/, network-gated) (2-3 weeks)
+
+**Features**: 4.31 A2A HTTP/JSON-RPC, 4.32 SSE streaming, 4.33 HMAC webhooks, 4.34 Agent Card discovery, 4.35 Federation multi-node
+
+**Scope**: `extensions/ithacus-a2a.ts` — real network A2A (PREVENT-ITH-004 exception annotated, like search.ts). Wires src/ negotiation/handoff/bus/task-lifecycle to remote agents.
+
+**Dependencies**: Sprints 5.1, 5.3, 5.4, 5.6.
+
+**Approval required**: Yes — first network extension since TIER 3 search.ts.
+
+---
+
 ## Summary
 
 | Tier | Sprints | Weeks | Files Added | Lines Added | Cumulative |
@@ -450,7 +546,8 @@ As-needed sprints, each requires explicit approval.
 | TIER 2 (v0.3.0) | 3 sprints | 6 weeks | +5 | +1,500 | 28 files, 4,000 lines |
 | TIER 3 (v0.4.0) | 2 sprints | 4 weeks | +6 | +1,500 | 34 files, 5,500 lines |
 | TIER 4 (v1.0+) | 5 sprints | 36-48 weeks | +4 | +1,500 | ~38 files, ~7,000 lines |
-| **Total** | **14 sprints** | **54-66 weeks** | **+26** | **+6,250** | **~38 files, ~7,000 lines** |
+| TIER 5 (v1.1+) | 9 sprints | 10-14 weeks | +10 | +2,000 | ~62 files, ~7,700 lines |
+| **Total** | **23 sprints** | **64-80 weeks** | **+36** | **+8,250** | **~62 files, ~7,700 lines** |
 
 ---
 
@@ -475,7 +572,7 @@ A feature is DONE when:
 3. Regression check passes (python3 scripts/regression_check.py --all)
 4. Smoke test passes (node --experimental-strip-types scripts/smoke-src.mjs)
 5. JSDoc comments on all exported functions
-6. Types defined in src/types.ts
+6. Types defined in src/types.ts or src/types-sprint-N.N.ts split files (types.ts is at 300/300 zero-headroom)
 7. No single file exceeds line limit
 8. Committed with AI attribution
 9. Pushed to remote

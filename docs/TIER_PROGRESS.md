@@ -223,3 +223,26 @@ All 5 TIER 4 sprints delivered (4.1 LSP, 4.2 Browser+Eval, 4.3 TUI+Collab, 4.4 D
 
 - All `src/` files ≤ 300 lines (types.ts at 300/300 zero-headroom; type additions split into `types-sprint-N.N.ts`).
 - The DI/injectable-transport pattern (LspTransport, BrowserDriver, EvalRuntime, TuiRenderer, CollabRelay, DapTransport, AstMatcher, LlmActor/LlmJudge, DwfDispatcher, ScheduleClock) is applied uniformly — every external dependency is injectable so src/ is fully unit-testable with mocks and zero runtime network.
+
+## TIER 5 — Advanced Swarm Workflows — IN PROGRESS
+
+Goal: close every agent-workflow gap found across radcode + radical + memory-mcp.
+ithacus stays purely agent-workflow orchestration (no memory/KG/RAG — separate
+project). All src/ modules pi-agnostic + zero-network (PREVENT-ITH-004); real
+A2A networking lives in extensions/ (Sprint 5.9).
+
+### Planned sprints
+
+| Sprint | Feature | Key files | Status |
+|---|---|---|---|
+| 5.1 | Priority work queue + task lifecycle store | `src/queue.ts`, upgrade `team.ts` | ⬜ |
+| 5.2 | DAG step control + rich step types + YAML | upgrade `workflow.ts`, `src/workflow-yaml.ts` | ⬜ |
+| 5.3 | Inter-agent negotiation + handoff | `src/negotiation.ts`, `src/handoff.ts` | ⬜ |
+| 5.4 | Swarm dispatch + synthesis + hive FS | `src/swarm.ts`, `src/synthesis.ts` | ⬜ |
+| 5.5 | Budget governor + leader election + router | `src/budget.ts`, `src/leader.ts`, `src/router.ts` | ⬜ |
+| 5.6 | In-process messaging bus + recovery | `src/bus.ts`, `src/recovery.ts` | ⬜ |
+| 5.7 | Distributed claiming + deadline queue | `src/claiming.ts`, upgrade `queue.ts` | ⬜ |
+| 5.8 | SprintTracker + 52-week planning | `src/sprint-tracker.ts`, upgrade `scheduler.ts` | ⬜ |
+| 5.9 | A2A protocol adapter (extensions/) | `extensions/ithacus-a2a.ts` | ⬜ |
+
+See: docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md for the full gap matrix.
