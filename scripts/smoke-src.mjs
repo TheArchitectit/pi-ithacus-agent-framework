@@ -32,6 +32,10 @@ const trim = await import(join(buildDir, "trim.ts"));
 const wf = await import(join(buildDir, "workflow.ts"));
 const wt = await import(join(buildDir, "worktree.ts"));
 const asc = await import(join(buildDir, "async.ts"));
+const { PresenceStore } = await import(join(buildDir, "store-presence.ts"));
+const presence = await import(join(buildDir, "presence.ts"));
+const reservations = await import(join(buildDir, "reservations.ts"));
+const cost = await import(join(buildDir, "cost.ts"));
 
 let failures = 0;
 function check(name, cond) {
@@ -253,6 +257,80 @@ store4.markWorktreeCleaned('wt-agent-1');
 const wtc = store4.getWorktree('wt-agent-1');
 check('store.markWorktreeCleaned sets cleaned', wtc.cleaned === true);
 store4.close();
+
+// ---- presence (Sprint 1.3) -----------------------------------------------
+const store5 = new IthStore(tmpRepo, cfg.loadConfig());
+const psStore = new PresenceStore(store5.db);
+
+const p1 = presence.joinPresence(psStore, 'p-agent-1', 'run-p1', 30000, 1000);
+check('joinPresence creates active presence', p1.status === 'active' && p1.lastHeartbeat === 1000);
+check('getPresence retrieves presence', psStore.getPresence('p-agent-1')?.status === 'active');
+
+presence.heartbeat(psStore, 'p-agent-1', 5000);
+check('heartbeat updates lastHeartbeat', psStore.getPresence('p-agent-1')?.lastHeartbeat === 5000);
+
+const stuckCount = presence.detectStuck(psStore, 50000);
+check('detectStuck marks stuck after threshold', stuckCount === 1);
+check('getPresence shows stuck status', psStore.getPresence('p-agent-1')?.status === 'stuck');
+
+const recovered = presence.heartbeat(psStore, 'p-agent-1', 51000);
+check('heartbeat recovers stuck agent', recovered.recovered === true);
+check('agent status back to active', psStore.getPresence('p-agent-1')?.status === 'active');
+
+presence.leavePresence(psStore, 'p-agent-1');
+check('leavePresence marks complete', psStore.getPresence('p-agent-1')?.status === 'complete');
+
+const presences = presence.listPresences(psStore, 'run-p1');
+check('listPresences returns all', presences.length === 1);
+const filtered = presence.listPresences(psStore, 'run-p1', 'complete');
+check('listPresences filters by status', filtered.length === 1);
+
+// ---- reservations (Sprint 1.3) -------------------------------------------
+const granted = reservations.reserveFile(psStore, { agentId: 'r-agent-1', runId: 'run-r1', filePath: '/src/foo.ts', scope: 'write' });
+check('reserveFile grants first write', granted === true);
+
+const conflict = reservations.reserveFile(psStore, { agentId: 'r-agent-2', runId: 'run-r1', filePath: '/src/foo.ts', scope: 'write' });
+check('reserveFile blocks conflicting write', conflict === false);
+
+const checkRes = reservations.checkConflict(psStore, '/src/foo.ts', 'r-agent-2');
+check('checkConflict returns reservation', checkRes !== undefined && checkRes.agentId === 'r-agent-1');
+
+const noConflict = reservations.checkConflict(psStore, '/src/foo.ts', 'r-agent-1');
+check('checkConflict allows own reservation', noConflict === undefined);
+
+reservations.releaseReservation(psStore, 'r-agent-1', '/src/foo.ts');
+check('releaseReservation frees file', reservations.checkConflict(psStore, '/src/foo.ts', 'r-agent-2') === undefined);
+
+reservations.reserveFile(psStore, { agentId: 'r-agent-1', runId: 'run-r1', filePath: '/src/a.ts', scope: 'write' });
+reservations.reserveFile(psStore, { agentId: 'r-agent-1', runId: 'run-r1', filePath: '/src/b.ts', scope: 'write' });
+reservations.releaseAll(psStore, 'r-agent-1');
+check('releaseAll frees all files', psStore.reservationsForRun('run-r1').length === 0);
+
+// ---- cost (Sprint 1.3) --------------------------------------------------
+cost.recordCost(psStore, { agentId: 'c-agent-1', runId: 'run-c1', inputTokens: 1000, outputTokens: 500, model: 'claude' });
+cost.recordCost(psStore, { agentId: 'c-agent-1', runId: 'run-c1', inputTokens: 2000, outputTokens: 1000, model: 'claude' });
+cost.recordCost(psStore, { agentId: 'c-agent-2', runId: 'run-c1', inputTokens: 500, outputTokens: 200, model: 'kimi' });
+
+const summary = cost.getCostSummary(psStore, 'run-c1');
+check('costSummary totalInput', summary.totalInput === 3500);
+check('costSummary totalOutput', summary.totalOutput === 1700);
+check('costSummary totalTokens', summary.totalTokens === 5200);
+check('costSummary entryCount', summary.entryCount === 3);
+check('costSummary byAgent has 2 entries', Object.keys(summary.byAgent).length === 2);
+check('costSummary byAgent c-agent-1', summary.byAgent['c-agent-1'].input === 3000);
+
+const agentCosts = cost.getAgentCosts(psStore, 'run-c1');
+check('getAgentCosts returns per-agent', agentCosts.length === 2);
+
+// Cost with role enrichment
+const summaryWithRoles = cost.getCostSummary(psStore, 'run-c1', [
+  { id: 'c-agent-1', runId: 'run-c1', role: 'Explore', model: 'claude', provider: null, status: 'working', lastSeen: 0, resultSchema: null, resultValidated: false },
+  { id: 'c-agent-2', runId: 'run-c1', role: 'Plan', model: 'kimi', provider: null, status: 'working', lastSeen: 0, resultSchema: null, resultValidated: false },
+]);
+check('costSummary byRole has Explore', summaryWithRoles.byRole['Explore']?.input === 3000);
+check('costSummary byRole has Plan', summaryWithRoles.byRole['Plan']?.input === 500);
+
+store5.close();
 
 rmSync(asyncStateDir, { recursive: true, force: true });
 

@@ -122,6 +122,56 @@ export interface AsyncRunState {
   error: string | null;
 }
 
+// ---- Presence types (Sprint 1.3) ----
+
+export type PresenceStatus = 'active' | 'stuck' | 'idle' | 'complete';
+
+/** Agent presence record — heartbeat-driven liveness. */
+export interface AgentPresence {
+  agentId: string;
+  runId: string;
+  status: PresenceStatus;
+  lastHeartbeat: number;
+  stuckThresholdMs: number;
+  createdAt: number;
+}
+
+// ---- Reservation types (Sprint 1.3) ----
+
+export type ReservationScope = 'write' | 'edit' | 'read';
+
+/** A file path reservation preventing conflicting writes. */
+export interface FileReservation {
+  agentId: string;
+  runId: string;
+  filePath: string;
+  scope: ReservationScope;
+  createdAt: number;
+}
+
+// ---- Cost types (Sprint 1.3) ----
+
+/** Token usage for a single agent action. */
+export interface CostEntry {
+  id: string;
+  agentId: string;
+  runId: string;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  ts: number;
+}
+
+/** Aggregated cost summary. */
+export interface CostSummary {
+  totalInput: number;
+  totalOutput: number;
+  totalTokens: number;
+  byAgent: Record<string, { input: number; output: number }>;
+  byRole: Record<string, { input: number; output: number }>;
+  entryCount: number;
+}
+
 export type MemoryKind = "decision" | "fact" | "preference";
 
 export interface IthMemory {
