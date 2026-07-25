@@ -7,6 +7,7 @@
 import type { IthRuntime } from './ithacus-runtime.js';
 import type { PresenceStore } from '../src/store-presence.js';
 import { joinPresence, leavePresence, heartbeat, detectStuck } from '../src/presence.js';
+import { releaseAll } from '../src/reservations.js';
 
 /** Get or create the PresenceStore for the current runtime. */
 export function getPresenceStore(runtime: IthRuntime): PresenceStore {
@@ -30,10 +31,11 @@ export function onHeartbeat(runtime: IthRuntime, agentId: string) {
   return heartbeat(ps, agentId);
 }
 
-/** Mark agent as complete on leave. */
+/** Mark agent as complete on leave. Release stale file reservations. */
 export function onAgentLeave(runtime: IthRuntime, agentId: string) {
   const ps = getPresenceStore(runtime);
   leavePresence(ps, agentId);
+  releaseAll(ps, agentId);
 }
 
 /** Run stuck detection, returns count of newly-stuck agents. */

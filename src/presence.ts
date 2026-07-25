@@ -55,8 +55,9 @@ export function heartbeat(
   now = Date.now(),
 ): { recovered: boolean } {
   const before = store.getPresence(agentId);
+  if (!before || before.status === 'complete') return { recovered: false };
   store.heartbeat(agentId, now);
-  return { recovered: before?.status === 'stuck' };
+  return { recovered: before.status === 'stuck' };
 }
 
 /**

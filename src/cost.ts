@@ -15,6 +15,9 @@ export function recordCost(
   store: PresenceStore,
   opts: { agentId: string; runId: string; inputTokens: number; outputTokens: number; model: string },
 ): CostEntry {
+  if (opts.inputTokens < 0 || opts.outputTokens < 0) {
+    throw new Error('Token counts must be non-negative');
+  }
   const entry: CostEntry = {
     id: `cost-${Date.now()}-${++costCounter}`,
     agentId: opts.agentId,

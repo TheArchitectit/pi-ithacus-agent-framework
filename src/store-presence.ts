@@ -75,7 +75,8 @@ export class PresenceStore {
     this.db.prepare(`UPDATE ith_presence SET status = ? WHERE agentId = ?`).run(status, agentId);
   }
   heartbeat(agentId: string, ts: number): void {
-    this.db.prepare(`UPDATE ith_presence SET lastHeartbeat = ?, status = 'active' WHERE agentId = ?`).run(ts, agentId);
+    this.db.prepare(`UPDATE ith_presence SET lastHeartbeat = ? WHERE agentId = ? AND status != 'complete'`).run(ts, agentId);
+    this.db.prepare(`UPDATE ith_presence SET status = 'active' WHERE agentId = ? AND status = 'stuck'`).run(agentId);
   }
   /** Find agents whose heartbeat is older than their stuckThresholdMs. */
   detectStuck(now: number): AgentPresence[] {
@@ -95,6 +96,10 @@ export class PresenceStore {
       `SELECT * FROM ith_reservations WHERE filePath = ? AND scope IN ('write','edit')`,
     ).get(r.filePath) as FileReservation | undefined;
     if (existing && existing.agentId !== r.agentId) return false;
+    if (existing && existing.agentId === r.agentId) {
+      const scopeRank: Record<string, number> = { read: 0, edit: 1, write: 2 };
+      if ((scopeRank[r.scope] ?? 0) < (scopeRank[existing.scope] ?? 0)) return true;
+    }
     this.db.prepare(
       `INSERT OR REPLACE INTO ith_reservations (agentId, runId, filePath, scope, createdAt)
        VALUES (?, ?, ?, ?, ?)`,
@@ -126,6 +131,10 @@ export class PresenceStore {
   }
   costsForRun(runId: string): CostEntry[] {
     return this.db.prepare(`SELECT * FROM ith_costs WHERE runId = ?`).all(runId) as CostEntry[];
+  }
+  /** Release all reservations for a run (cleanup on run completion). */
+  releaseForRun(runId: string): void {
+    this.db.prepare(`DELETE FROM ith_reservations WHERE runId = ?`).run(runId);
   }
   costSummary(runId: string, agents?: IthAgent[]): CostSummary {
     const entries = this.costsForRun(runId);

@@ -332,6 +332,36 @@ check('costSummary byRole has Plan', summaryWithRoles.byRole['Plan']?.input === 
 
 store5.close();
 
+// ---- bug fixes (Sprint 1.3 audit) -----------------------------------------
+const storeBug = new IthStore(tmpRepo, cfg.loadConfig());
+
+// BUG-1 fix: heartbeat after leavePresence does NOT resurrect
+const psBug1 = new PresenceStore(storeBug.db);
+presence.joinPresence(psBug1, 'bug1-agent', 'run-bug1', 30000, 1000);
+presence.leavePresence(psBug1, 'bug1-agent');
+presence.heartbeat(psBug1, 'bug1-agent', 5000);
+check('BUG-1: heartbeat after leave does NOT resurrect', psBug1.getPresence('bug1-agent')?.status === 'complete');
+
+// BUG-2 fix: releaseAll clears agent reservations
+const psBug2 = new PresenceStore(storeBug.db);
+reservations.reserveFile(psBug2, { agentId: 'bug2-agent', runId: 'run-bug2', filePath: '/src/stale.ts', scope: 'write' });
+reservations.releaseAll(psBug2, 'bug2-agent');
+check('BUG-2: reservation released after releaseAll', psBug2.isReserved('/src/stale.ts') === undefined);
+
+// BUG-3 fix: no scope downgrade
+const psBug3 = new PresenceStore(storeBug.db);
+reservations.reserveFile(psBug3, { agentId: 'bug3-agent', runId: 'run-bug3', filePath: '/src/scope.ts', scope: 'write' });
+reservations.reserveFile(psBug3, { agentId: 'bug3-agent', runId: 'run-bug3', filePath: '/src/scope.ts', scope: 'read' });
+check('BUG-3: write reservation not downgraded to read', psBug3.isReserved('/src/scope.ts')?.scope === 'write');
+
+// BUG-4 fix: negative tokens rejected
+let negThrew = false;
+try { cost.recordCost(psBug3, { agentId: 'x', runId: 'r', inputTokens: -1, outputTokens: 0, model: 'm' }); }
+catch { negThrew = true; }
+check('BUG-4: negative tokens rejected', negThrew);
+
+storeBug.close();
+
 rmSync(asyncStateDir, { recursive: true, force: true });
 
 rmSync(buildDir, { recursive: true, force: true });
