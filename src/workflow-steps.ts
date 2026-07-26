@@ -9,7 +9,7 @@
  * (execute substeps sequentially).
  */
 
-import type { WorkflowStep, WorkflowTemplate, StepResult, WorkflowResult } from './types-sprint-5.2.js';
+import type { WorkflowStep, WorkflowTemplate, StepResult, WorkflowResult, RetryPredicate } from './types-sprint-5.2.js';
 
 /** Injectable step executor (mock in tests; real subagent dispatch in extensions). */
 export interface StepExecutor {
@@ -17,6 +17,8 @@ export interface StepExecutor {
   execute(step: WorkflowStep, vars: Record<string, unknown>): Promise<unknown>;
   /** Wall clock now (ms). */
   now(): number;
+  /** Optional: return false to stop retrying early (e.g. permanent error). If undefined, all attempts are used. */
+  isRetryable?: RetryPredicate;
 }
 
 /** Injectable human-review callback (HUMAN_REVIEW steps). */
@@ -50,7 +52,7 @@ export function evalCondition(expr: string, vars: Record<string, unknown>): bool
   if (not) { const v = vars[not[1]]; return !v; }
   const bare = e.match(/^(\w+)$/);
   if (bare) return !!vars[bare[1]];
-  return false;
+  throw new Error('unrecognized condition: ' + e);
 }
 
 function parseLit(s: string): unknown {
@@ -69,14 +71,19 @@ export async function runStep(step: WorkflowStep, vars: Record<string, unknown>,
   let attempts = 0;
   const maxAttempts = (step.retryCount ?? 0) + 1;
   if (step.type === 'condition') {
-    const ok = evalCondition(step.condition ?? '', vars);
-    return { stepId: step.id, status: ok ? 'completed' : 'skipped', output: ok, attempts: 1, durationMs: executor.now() - start };
+    try {
+      const ok = evalCondition(step.condition ?? '', vars);
+      return { stepId: step.id, status: ok ? 'completed' : 'skipped', output: ok, attempts: 1, durationMs: executor.now() - start };
+    } catch (e) {
+      return { stepId: step.id, status: 'failed', error: errMsg(e), attempts: 1, durationMs: executor.now() - start };
+    }
   }
   if (step.type === 'human_review') {
     if (!reviewer) return { stepId: step.id, status: 'failed', error: 'no reviewer provided for human_review step', attempts: 1, durationMs: 0 };
     try {
       const r = await reviewer(step, vars);
-      return { stepId: step.id, status: r.approve ? 'completed' : 'skipped', output: r.comment, attempts: 1, durationMs: executor.now() - start };
+      if (r.approve) return { stepId: step.id, status: 'completed', output: r.comment, attempts: 1, durationMs: executor.now() - start };
+      return { stepId: step.id, status: 'failed', error: 'human review rejected' + (r.comment ? ': ' + r.comment : ''), output: r.comment, attempts: 1, durationMs: executor.now() - start };
     } catch (e) {
       return { stepId: step.id, status: 'failed', error: errMsg(e), attempts: 1, durationMs: executor.now() - start };
     }
@@ -88,6 +95,7 @@ export async function runStep(step: WorkflowStep, vars: Record<string, unknown>,
   }
   if (step.type === 'loop') {
     const count = step.loopCount ?? 0;
+    if (count === 0) return { stepId: step.id, status: 'skipped', output: [], attempts: 1, durationMs: executor.now() - start, subresults: [] };
     const subresults: StepResult[] = [];
     for (let i = 0; i < count; i++) {
       const loopVars = { ...vars, loopIndex: i };
@@ -103,39 +111,97 @@ export async function runStep(step: WorkflowStep, vars: Record<string, unknown>,
   let lastErr: string | undefined;
   for (let i = 0; i < maxAttempts; i++) {
     attempts++;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       let p = executor.execute(step, vars);
       if (step.timeoutMs && step.timeoutMs > 0) {
-        const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), step.timeoutMs));
+        const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), step.timeoutMs); });
         p = Promise.race([p, timeout]);
       }
       const output = await p;
+      if (timer) clearTimeout(timer);
       return { stepId: step.id, status: 'completed', output, attempts, durationMs: executor.now() - start };
     } catch (e) {
+      if (timer) clearTimeout(timer);
       lastErr = errMsg(e);
+      if (typeof executor.isRetryable === 'function' && !executor.isRetryable(lastErr)) break;
     }
   }
   return { stepId: step.id, status: lastErr === 'timeout' ? 'timeout' : 'failed', error: lastErr, attempts, durationMs: executor.now() - start };
 }
 
-/** Run a full workflow template top-to-bottom (in declared order; dependsOn respected by caller-arranging steps). */
+/** Topologically sort steps by dependsOn (DFS). Returns ordered ids, or a cycle path if cyclic. */
+export function topoSort(steps: WorkflowStep[]): { order: string[]; cycle?: string[] } {
+  const byId = new Map<string, WorkflowStep>();
+  for (const s of steps) byId.set(s.id, s);
+  const order: string[] = [];
+  const state = new Map<string, 0 | 1>();
+  const visit = (id: string, path: string[]): string[] | null => {
+    const st = state.get(id);
+    if (st === 1) return null;
+    if (st === 0) return path.slice(path.indexOf(id)).concat(id);
+    state.set(id, 0);
+    path.push(id);
+    const step = byId.get(id);
+    if (step?.dependsOn) {
+      for (const d of step.dependsOn) {
+        if (!byId.has(d)) continue;
+        const c = visit(d, path);
+        if (c) return c;
+      }
+    }
+    path.pop();
+    state.set(id, 1);
+    order.push(id);
+    return null;
+  };
+  for (const s of steps) {
+    const c = visit(s.id, []);
+    if (c) return { order: [], cycle: c };
+  }
+  return { order };
+}
+
+/**
+ * Run a workflow template in topological (dependsOn) order.
+ * onError = cleanup/recovery step run on failure (once; tracked via executedIds).
+ * stopOnError:true → handler runs, then workflow ends 'failed'.
+ * stopOnError:false → handler runs, execution continues to remaining steps.
+ * Executor promises are NOT cancellable (no AbortSignal in this sprint — deferred to extensions/).
+ */
 export async function runWorkflow(opts: RunWorkflowOpts): Promise<WorkflowResult> {
   const vars = { ...(opts.template.variables ?? {}), ...(opts.variables ?? {}) };
   const start = opts.executor.now();
   const results: StepResult[] = [];
   const errors: string[] = [];
   const stopOnError = opts.stopOnError ?? true;
+  const executedIds = new Set<string>();
   let finalOutput: unknown;
   let status: WorkflowResult['status'] = 'completed';
-  for (const step of opts.template.steps) {
+  const topo = topoSort(opts.template.steps);
+  if (topo.cycle) {
+    errors.push(`cycle detected: ${topo.cycle.join(' -> ')}`);
+    return { templateName: opts.template.name, status: 'failed', results, totalDurationMs: opts.executor.now() - start, finalOutput, errors, variables: vars };
+  }
+  const byId = new Map<string, WorkflowStep>();
+  for (const s of opts.template.steps) byId.set(s.id, s);
+  for (const id of topo.order) {
+    if (executedIds.has(id)) continue;
+    const step = byId.get(id);
+    if (!step) continue;
     const r = await runStep(step, vars, opts.executor, opts.reviewer);
+    executedIds.add(id);
     results.push(r);
     if (r.status === 'completed' && (step.type === 'task' || step.type === 'tool_call')) finalOutput = r.output;
     if (r.status === 'failed' || r.status === 'timeout') {
       errors.push(`${step.id}: ${r.error ?? 'failed'}`);
       if (step.onError) {
-        const handler = opts.template.steps.find(s => s.id === step.onError);
-        if (handler) { const hr = await runStep(handler, vars, opts.executor, opts.reviewer); results.push(hr); }
+        const handler = byId.get(step.onError);
+        if (handler && !executedIds.has(handler.id)) {
+          const hr = await runStep(handler, vars, opts.executor, opts.reviewer);
+          executedIds.add(handler.id);
+          results.push(hr);
+        }
       }
       if (stopOnError) { status = 'failed'; break; }
       status = 'partial';

@@ -2664,6 +2664,80 @@ const wfEnd5b = await runWorkflow({ template: fromYaml(yaml5b1), executor: exbEn
 check('yaml.runWorkflow integration', wfEnd5b.status === 'completed' && wfEnd5b.finalOutput === 'tested' && wfEnd5b.variables?.env === 'staging');
 check('yaml.runWorkflow results', wfEnd5b.results.length === 2);
 
+// === P1 Fix 1: dependsOn topo sort ===
+const exTopo = makeExecutor5b({ b: { output: 'B-after-A' }, a: { output: 'A' } });
+// declare b (dependsOn a) BEFORE a — topo sort must run a first
+const wfTopo = await runWorkflow({ template: { name: 'topo', steps: [
+  { id: 'b', name: 'B', type: 'task', dependsOn: ['a'] },
+  { id: 'a', name: 'A', type: 'task' },
+] }, executor: exTopo });
+check('runWorkflow.topoSort reorders', wfTopo.status === 'completed' && wfTopo.results.length === 2);
+check('runWorkflow.topoSort a first', wfTopo.results[0].stepId === 'a' && wfTopo.results[1].stepId === 'b');
+
+// === P1 Fix 1: cycle detection ===
+const wfCycle = await runWorkflow({ template: { name: 'cycle', steps: [
+  { id: 'a', name: 'A', type: 'task', dependsOn: ['b'] },
+  { id: 'b', name: 'B', type: 'task', dependsOn: ['a'] },
+] }, executor: makeExecutor5b({}) });
+check('runWorkflow.cycle detection', wfCycle.status === 'failed' && wfCycle.errors.length >= 1 && wfCycle.errors[0]?.includes('cycle'));
+
+// === P1 Fix 2: onError no double-exec ===
+let fixCalls = 0;
+const exFix = makeExecutor5b({ a: { throw: 'X' }, fix: () => { fixCalls++; return 'fixed'; }, b: { output: 'B' } });
+const wfFix = await runWorkflow({ template: { name: 'fix', steps: [
+  { id: 'a', name: 'A', type: 'task', onError: 'fix' },
+  { id: 'fix', name: 'Fix', type: 'task' },
+  { id: 'b', name: 'B', type: 'task' },
+] }, executor: exFix, stopOnError: false });
+check('runWorkflow.onError no double-exec', fixCalls === 1);
+check('runWorkflow.onError continue partial', wfFix.status === 'partial' && wfFix.results.some(r => r.stepId === 'b'));
+
+// === P2 Fix 4: human_review rejection = failure ===
+const rejectReviewer = async () => ({ approve: false, comment: 'no good' });
+const wfReject = await runWorkflow({ template: { name: 'reject', steps: [
+  { id: 'hr', name: 'HR', type: 'human_review' },
+  { id: 'next', name: 'Next', type: 'task' },
+] }, executor: makeExecutor5b({ next: { output: 'N' } }), reviewer: rejectReviewer });
+check('runWorkflow.humanReview rejection fails', wfReject.status === 'failed' && wfReject.errors.length >= 1);
+check('runWorkflow.humanReview rejection stops', !wfReject.results.some(r => r.stepId === 'next'));
+
+// === P2 Fix 5: isRetryable — permanent: no retry ===
+let permCalls = 0;
+const exPerm = makeExecutor5b({ s: () => { permCalls++; throw new Error('permanent'); } });
+exPerm.isRetryable = () => false;  // permanent — don't retry
+const rPerm = await runStep({ id: 's', name: 'S', type: 'task', retryCount: 3 }, {}, exPerm);
+check('runStep.isRetryable no retry', rPerm.attempts === 1 && rPerm.status === 'failed');
+
+// === P2 Fix 5: isRetryable — transient: retry until success ===
+let retrCalls = 0;
+const exRetr = makeExecutor5b({ s: () => { retrCalls++; if (retrCalls < 2) throw new Error('transient'); return 'ok'; } });
+exRetr.isRetryable = () => true;
+const rRetr = await runStep({ id: 's', name: 'S', type: 'task', retryCount: 3 }, {}, exRetr);
+check('runStep.isRetryable retries transient', rRetr.attempts === 2 && rRetr.status === 'completed');
+
+// === P3 Fix 6: evalCondition throws on unrecognized operator ===
+let condErr = false;
+try { evalCondition('a >= 5', { a: 10 }); } catch { condErr = true; }
+check('evalCondition throws on unrecognized', condErr);
+let condErr2 = false;
+try { evalCondition('a && b', { a: true, b: true }); } catch { condErr2 = true; }
+check('evalCondition throws on && operator', condErr2);
+
+// === P3 Fix 7: validateTemplate recurses substeps for dup ids ===
+const dupSub = validateTemplate({ name: 'x', steps: [
+  { id: 'p', name: 'P', type: 'parallel', substeps: [
+    { id: 'a', name: 'A', type: 'task' },
+    { id: 'a', name: 'B', type: 'task' },  // duplicate id in substeps
+  ] },
+] });
+check('validateTemplate recurses substeps', dupSub?.includes('duplicate'));
+
+// === P3 Fix 8: loop count 0 = skipped ===
+const rLoop0 = await runStep({ id: 'l0', name: 'L0', type: 'loop', loopCount: 0, substeps: [
+  { id: 's', name: 'S', type: 'task' },
+] }, {}, makeExecutor5b({}));
+check('runStep.loop count 0 skipped', rLoop0.status === 'skipped');
+
 rmSync(buildDir, { recursive: true, force: true });
 rmSync(tmpRepo, { recursive: true, force: true });
 

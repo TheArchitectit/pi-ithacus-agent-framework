@@ -158,11 +158,21 @@ export function validateTemplate(t: WorkflowTemplate): string | null {
   if (!t.name) return 'template missing name';
   if (!Array.isArray(t.steps) || t.steps.length === 0) return 'template needs at least one step';
   const ids = new Set<string>();
+  const allSteps: WorkflowStep[] = [];
+  const collect = (steps: WorkflowStep[]): string | null => {
+    for (const s of steps) {
+      if (ids.has(s.id)) return `duplicate step id: ${s.id}`;
+      ids.add(s.id);
+      allSteps.push(s);
+      if (s.substeps) { const e = collect(s.substeps); if (e) return e; }
+    }
+    return null;
+  };
+  const dupErr = collect(t.steps);
+  if (dupErr) return dupErr;
   for (const s of t.steps) {
-    if (ids.has(s.id)) return `duplicate step id: ${s.id}`;
-    ids.add(s.id);
-    if (s.onError && !t.steps.find(x => x.id === s.onError)) return `onError target ${s.onError} not found for step ${s.id}`;
-    if (s.dependsOn) for (const d of s.dependsOn) if (!t.steps.find(x => x.id === d) && !(s.substeps ?? []).find(x => x.id === d)) return `dependsOn ${d} not found for step ${s.id}`;
+    if (s.onError && !allSteps.find(x => x.id === s.onError)) return `onError target ${s.onError} not found for step ${s.id}`;
+    if (s.dependsOn) for (const d of s.dependsOn) if (!allSteps.find(x => x.id === d)) return `dependsOn ${d} not found for step ${s.id}`;
   }
   return null;
 }

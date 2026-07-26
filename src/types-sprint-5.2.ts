@@ -3,6 +3,9 @@
  * Split because types.ts is at 300/300 (zero headroom).
  */
 
+/** Optional retryability predicate: return false to stop retrying early (e.g. permanent error). If undefined, all attempts are used (backward-compatible). */
+export type RetryPredicate = (error: string) => boolean;
+
 /** Workflow step types (rich step kinds). */
 export type StepType = 'task' | 'tool_call' | 'condition' | 'parallel' | 'loop' | 'human_review' | 'subworkflow';
 
