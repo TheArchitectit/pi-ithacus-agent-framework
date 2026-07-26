@@ -17,8 +17,11 @@ let msgIdCounter = 0;
 /** Injectable acceptance policy (default = capability + load based). */
 export type AcceptancePolicy = (offer: TaskOffer, agent: AgentCapability) => Promise<{ accept: boolean; counter?: Partial<TaskCounterOffer> }>;
 
-/** Injectable resource policy (default = always grant read, write if not held). */
-export type ResourcePolicy = (req: ResourceRequest, holder: string | undefined) => Promise<boolean>;
+/**
+ * Injectable resource policy. `holder` is the exclusive writer (or undefined);
+ * `readerCount` is how many concurrent readers currently hold the resource.
+ */
+export type ResourcePolicy = (req: ResourceRequest, holder: string | undefined, readerCount: number) => Promise<boolean>;
 
 const defaultAcceptance: AcceptancePolicy = async (offer, agent) => {
   if (!agent.available) return { accept: false };
@@ -26,16 +29,17 @@ const defaultAcceptance: AcceptancePolicy = async (offer, agent) => {
   return { accept: true };
 };
 
-const defaultResource: ResourcePolicy = async (req, holder) => {
-  if (req.access === 'read') return true;
-  if (req.access === 'write') return holder === undefined;
-  return holder === undefined;  // exclusive
+/** Default: read granted iff no writer; write/exclusive granted iff no writer AND no readers. */
+const defaultResource: ResourcePolicy = async (req, holder, readerCount) => {
+  if (req.access === 'read') return holder === undefined;
+  return holder === undefined && readerCount === 0;  // write / exclusive
 };
 
 /** Negotiation manager — tracks agents, dispatches offers/requests. */
 export class NegotiationManager {
   private agents = new Map<string, AgentCapability>();
-  private resources = new Map<string, string>();  // resourceId -> holder agentId
+  private readers = new Map<string, Set<string>>();  // resourceId -> set of reader agentIds
+  private writers = new Map<string, string>();       // resourceId -> exclusive writer agentId
   private messages: NegotiationMessage[] = [];
   private subs = new Set<(m: NegotiationMessage) => void>();
   private acceptance: AcceptancePolicy;
@@ -48,10 +52,14 @@ export class NegotiationManager {
 
   /** Register an agent. */
   registerAgent(cap: AgentCapability): void { this.agents.set(cap.agentId, cap); }
-  /** Unregister an agent. */
+  /** Unregister an agent — clears both reader memberships and held writer slots. */
   unregisterAgent(agentId: string): void {
     this.agents.delete(agentId);
-    for (const [k, v] of this.resources) if (v === agentId) this.resources.delete(k);
+    for (const [rid, set] of this.readers) {
+      set.delete(agentId);
+      if (set.size === 0) this.readers.delete(rid);
+    }
+    for (const [rid, w] of this.writers) if (w === agentId) this.writers.delete(rid);
   }
   /** Get an agent. */
   getAgent(agentId: string): AgentCapability | undefined { return this.agents.get(agentId); }
@@ -64,12 +72,12 @@ export class NegotiationManager {
     const agent = this.agents.get(offer.toAgent);
     if (!agent) {
       const rejectPayload = { taskId: offer.taskId, fromAgent: offer.toAgent, toAgent: offer.fromAgent, reason: 'agent not found', ts: full.ts } as TaskCounterOffer;
-      return this.record('task_reject', offer.taskId, full, rejectPayload);
+      return this.record('task_reject', offer.taskId, rejectPayload);
     }
     const decision = await this.acceptance(full, agent);
     if (decision.accept) {
       agent.load = Math.min(1, agent.load + 0.2);
-      return this.record('task_accept', offer.taskId, full, full);
+      return this.record('task_accept', offer.taskId, full);
     }
     if (decision.counter) {
       const counter: TaskCounterOffer = {
@@ -78,41 +86,62 @@ export class NegotiationManager {
         counterBudget: decision.counter.counterBudget,
         reason: decision.counter.reason ?? 'counter-offer', ts: full.ts,
       };
-      return this.record('task_counter', offer.taskId, full, counter);
+      return this.record('task_counter', offer.taskId, counter);
     }
     const rejectPayload = { taskId: offer.taskId, fromAgent: offer.toAgent, toAgent: offer.fromAgent, reason: 'rejected', ts: full.ts } as TaskCounterOffer;
-    return this.record('task_reject', offer.taskId, full, rejectPayload);
+    return this.record('task_reject', offer.taskId, rejectPayload);
   }
 
   /** Request a resource. Returns the grant/deny message. */
   async requestResource(req: Omit<ResourceRequest, 'ts'> & { ts?: number }): Promise<NegotiationMessage> {
     const full: ResourceRequest = { ...req, ts: req.ts ?? Date.now() };
-    const holder = this.resources.get(req.resourceId);
-    const granted = await this.resourcePolicy(full, holder);
+    const holder = this.writers.get(req.resourceId);
+    const readerCount = this.readers.get(req.resourceId)?.size ?? 0;
+    const granted = await this.resourcePolicy(full, holder, readerCount);
     const grant: ResourceGrant = {
       requestId: `req-${++msgIdCounter}`, resourceId: req.resourceId,
       fromAgent: req.toAgent, toAgent: req.fromAgent, granted,
-      reason: granted ? undefined : (holder ? `held by ${holder}` : 'denied'), ts: full.ts,
+      reason: granted ? undefined : (holder ? `held by ${holder}` : (readerCount > 0 ? `read by ${readerCount}` : 'denied')), ts: full.ts,
     };
-    if (granted) this.resources.set(req.resourceId, req.fromAgent);
-    return this.record(granted ? 'resource_grant' : 'resource_deny', undefined, full, grant);
+    if (granted) {
+      if (req.access === 'read') this.addReader(req.resourceId, req.fromAgent);
+      else this.writers.set(req.resourceId, req.fromAgent);  // write / exclusive
+    }
+    return this.record(granted ? 'resource_grant' : 'resource_deny', undefined, grant);
   }
 
-  /** Release a held resource. */
+  /** Release a held resource (reader membership or writer slot). */
   releaseResource(resourceId: string, agentId: string): boolean {
-    if (this.resources.get(resourceId) !== agentId) return false;
-    this.resources.delete(resourceId);
-    return true;
+    const set = this.readers.get(resourceId);
+    if (set?.has(agentId)) {
+      set.delete(agentId);
+      if (set.size === 0) this.readers.delete(resourceId);
+      return true;
+    }
+    if (this.writers.get(resourceId) === agentId) {
+      this.writers.delete(resourceId);
+      return true;
+    }
+    return false;
   }
-  /** Get the holder of a resource. */
-  getResourceHolder(resourceId: string): string | undefined { return this.resources.get(resourceId); }
+  /** Get the exclusive writer of a resource, if any. (Reads are concurrent — no single holder.) */
+  getResourceHolder(resourceId: string): string | undefined { return this.writers.get(resourceId); }
+  /** Get the list of current reader agentIds for a resource. */
+  getResourceReaders(resourceId: string): string[] { return [...(this.readers.get(resourceId) ?? [])]; }
 
   /** Subscribe to all messages. */
   subscribe(fn: (m: NegotiationMessage) => void): () => void { this.subs.add(fn); return () => { this.subs.delete(fn); }; }
   /** Get all messages (audit log). */
   getMessages(): NegotiationMessage[] { return [...this.messages]; }
 
-  private record(kind: NegotiationKind, taskId: string | undefined, offer: TaskOffer | ResourceRequest, payload: NegotiationMessage['payload']): NegotiationMessage {
+  /** Add a reader to a resource's reader set (creating it if absent). */
+  private addReader(resourceId: string, agentId: string): void {
+    let set = this.readers.get(resourceId);
+    if (!set) { set = new Set<string>(); this.readers.set(resourceId, set); }
+    set.add(agentId);
+  }
+
+  private record(kind: NegotiationKind, taskId: string | undefined, payload: NegotiationMessage['payload']): NegotiationMessage {
     const msg: NegotiationMessage = { id: `neg-${++msgIdCounter}`, kind, taskId, payload, ts: Date.now() };
     this.messages.push(msg);
     for (const fn of this.subs) fn(msg);

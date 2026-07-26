@@ -2772,11 +2772,33 @@ nm2.registerAgent(makeAgent5c('a1', 'r', []));
 nm2.registerAgent(makeAgent5c('a2', 'r', []));
 const req1 = await nm2.requestResource({ resourceId: '/src/foo.ts', fromAgent: 'a1', toAgent: 'a2', access: 'read' });
 check('neg.resource grant read', req1.kind === 'resource_grant');
-check('neg.resource holder set', nm2.getResourceHolder('/src/foo.ts') === 'a1');
+check('neg.resource read no single holder', nm2.getResourceHolder('/src/foo.ts') === undefined);
+check('neg.resource read tracked', nm2.getResourceReaders('/src/foo.ts').includes('a1'));
+// concurrent read by a2
+const req1b = await nm2.requestResource({ resourceId: '/src/foo.ts', fromAgent: 'a2', toAgent: 'a1', access: 'read' });
+check('neg.resource concurrent read granted', req1b.kind === 'resource_grant');
+check('neg.resource both readers', nm2.getResourceReaders('/src/foo.ts').length === 2);
+// a1 release (read)
+check('neg.resource release read', nm2.releaseResource('/src/foo.ts', 'a1') === true);
+check('neg.resource release read one remains', nm2.getResourceReaders('/src/foo.ts').length === 1);
+// a1 write now should be DENIED (a2 still reads)
+const req1c = await nm2.requestResource({ resourceId: '/src/foo.ts', fromAgent: 'a1', toAgent: 'a2', access: 'write' });
+check('neg.resource write denied while readers', req1c.kind === 'resource_deny');
+// a2 release read
+check('neg.resource release read a2', nm2.releaseResource('/src/foo.ts', 'a2') === true);
+check('neg.resource no readers after release', nm2.getResourceReaders('/src/foo.ts').length === 0);
 
 // === Negotiation: resource deny (write conflict) ===
-const req2 = await nm2.requestResource({ resourceId: '/src/foo.ts', fromAgent: 'a2', toAgent: 'a1', access: 'write' });
-check('neg.resource deny write conflict', req2.kind === 'resource_deny');
+const nm2b = createNegotiationManager();
+nm2b.registerAgent(makeAgent5c('a1', 'r', []));
+nm2b.registerAgent(makeAgent5c('a2', 'r', []));
+const reqW = await nm2b.requestResource({ resourceId: '/src/w.ts', fromAgent: 'a1', toAgent: 'a2', access: 'write' });
+check('neg.resource write granted', reqW.kind === 'resource_grant');
+check('neg.resource writer holder', nm2b.getResourceHolder('/src/w.ts') === 'a1');
+const reqW2 = await nm2b.requestResource({ resourceId: '/src/w.ts', fromAgent: 'a2', toAgent: 'a1', access: 'write' });
+check('neg.resource deny write conflict', reqW2.kind === 'resource_deny');
+const reqR = await nm2b.requestResource({ resourceId: '/src/w.ts', fromAgent: 'a2', toAgent: 'a1', access: 'read' });
+check('neg.resource read denied while writer', reqR.kind === 'resource_deny');
 
 // === Negotiation: resource grant (write, no holder) ===
 const nm3 = createNegotiationManager();
