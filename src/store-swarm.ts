@@ -147,14 +147,14 @@ export class SwarmStore {
   listSwarmRuns(limit = 20): SwarmRunRow[] {
     return this.db.prepare(
       `SELECT runId, swarmName, total, successful, failed, blocked, totalDurationMs, createdAt
-       FROM ith_swarm_runs ORDER BY createdAt DESC LIMIT ?`,
+       FROM ith_swarm_runs ORDER BY createdAt DESC, runId DESC LIMIT ?`,
     ).all(limit) as unknown as SwarmRunRow[];
   }
 
   /** Newest SwarmResult for a given swarm name (undefined if none). */
   latestSwarmRun(swarmName: string): SwarmResult | undefined {
     const row = this.db.prepare(
-      `SELECT runId FROM ith_swarm_runs WHERE swarmName = ? ORDER BY createdAt DESC LIMIT 1`,
+      `SELECT runId FROM ith_swarm_runs WHERE swarmName = ? ORDER BY createdAt DESC, runId DESC LIMIT 1`,
     ).get(swarmName) as { runId: string } | undefined;
     if (!row) return undefined;
     return this.getSwarmResult(row.runId);

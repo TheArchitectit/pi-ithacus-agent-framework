@@ -3238,6 +3238,13 @@ check('synth.weighted conflict resolution mentions method', wConf.conflicts[0]?.
   // createSwarmStore factory
   const sStore2 = createSwarmStore(st5e.db)
   check('swarmstore.factory works', sStore2.listSwarmRuns(10).length === 2)
+  // same-ms tiebreak: latestSwarmRun must return the NEWER runId (counter-based)
+  const sameMs1 = sStore.saveSwarmResult({ swarmName: 'same-ms', total: 1, successful: 1, failed: 0, blocked: 0, results: [{ itemId: 1, itemName: 'A', success: true, output: 'first', durationMs: 1 }], totalDurationMs: 1, checkpoints: [] }, 5000)
+  const sameMs2 = sStore.saveSwarmResult({ swarmName: 'same-ms', total: 1, successful: 1, failed: 0, blocked: 0, results: [{ itemId: 1, itemName: 'A', success: true, output: 'second', durationMs: 1 }], totalDurationMs: 1, checkpoints: [] }, 5000)
+  check('swarmstore.same-ms latest is newer', sStore.latestSwarmRun('same-ms').runId === sameMs2)
+  // listSwarmRuns ordering for same-ms should also be stable (newer first)
+  const sameList = sStore.listSwarmRuns(50).filter(r => r.swarmName === 'same-ms')
+  check('swarmstore.same-ms list newer first', sameList[0].runId === sameMs2)
   st5e.close()
   rmSync(swarmTmp, { recursive: true, force: true })
 }

@@ -142,7 +142,7 @@ export function registerTeamCommands(
       items: items.map((label, i) => ({
         name: label,
         role: "Explore",
-        priority: i,  // earlier items run first
+        priority: Math.min(i, 3),  // cap at P3; earlier items run first
         dependsOn: i > 0 ? [items[i - 1]] : [],
         prompt: `Investigate ${label} and report concise findings.`,
       })),
