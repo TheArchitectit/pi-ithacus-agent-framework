@@ -12,9 +12,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type IthRuntime } from "./ithacus-runtime.js";
 import { type IthacusConfig } from "../src/config.js";
 import { createTeam, deleteTeam, teamStatus } from "./ithacus-team.js";
-import type { ModePreset, ResolvedModel } from "../src/team.js";
+import { resolveAgentModel, type ModePreset, type ResolvedModel } from "../src/team.js";
 import { ensureProfiles, buildProfileSelectionPrompt } from "./ithacus-profiles.js";
 import { validatePrompt } from "../src/validator.js";
+import { runSwarm, type SwarmSpec } from "./ithacus-swarm.js";
+import { SwarmStore } from "../src/store-swarm.js";
+import { synthesize } from "../src/synthesis.js";
 
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
@@ -108,4 +111,75 @@ export function registerTeamCommands(
   // Expose deleteTeam for programmatic use.
   (runtime as any).deleteTeam = (runId: string) => deleteTeam(runtime, runId);
   (runtime as any).teamStatus = (runId: string) => teamStatus(runtime, runId);
+
+  // ---- /ithacus-swarm (feat 4.24) ----------------------------------------
+  //   list                  → JSON of recent swarm runs
+  //   show <runId>          → JSON of one SwarmResult
+  //   <name> <item> ...      → run a pipeline swarm (each item depends on prev)
+  pi.registerCommand("ithacus-swarm", async (args, ctx) => {
+    runtime.bindRepo(ctx.cwd);
+    const sStore = new SwarmStore(runtime.store.db);
+    const raw = (args as string)?.trim() ?? "";
+    const parts = raw.split(/\s+/).filter(Boolean);
+
+    if (parts[0] === "list") {
+      return JSON.stringify(sStore.listSwarmRuns(20));
+    }
+    if (parts[0] === "show") {
+      const runId = parts[1];
+      if (!runId) return "usage: /ithacus-swarm show <runId>";
+      const got = sStore.getSwarmResult(runId);
+      return got ? JSON.stringify(got) : `swarm run ${runId} not found`;
+    }
+
+    // Default: run a pipeline swarm. token[0]=name, token[1..]=items.
+    if (parts.length < 2) {
+      return "usage: /ithacus-swarm <name> <item1> <item2> ... | list | show <runId>";
+    }
+    const [name, ...items] = parts;
+    const spec: SwarmSpec = {
+      name,
+      items: items.map((label, i) => ({
+        name: label,
+        role: "Explore",
+        priority: i,  // earlier items run first
+        dependsOn: i > 0 ? [items[i - 1]] : [],
+        prompt: `Investigate ${label} and report concise findings.`,
+      })),
+    };
+    try {
+      const resolved = captureResolved(ctx);
+      const model = resolveAgentModel(null, resolved);
+      const outcome = await runSwarm({ pi, runtime, spec, model });
+      return `swarm ${name}: ${outcome.result.successful}/${outcome.result.total} ok (storeRunId=${outcome.storeRunId})`;
+    } catch (e) {
+      return `swarm ${name} failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  });
+
+  // ---- /ithacus-synth <runId> [method] (feat 4.24) -----------------------
+  // Load a SwarmResult, take successful item outputs as contributions, synthesize.
+  pi.registerCommand("ithacus-synth", async (args, ctx) => {
+    runtime.bindRepo(ctx.cwd);
+    const raw = (args as string)?.trim() ?? "";
+    const parts = raw.split(/\s+/).filter(Boolean);
+    const runId = parts[0];
+    if (!runId) return "usage: /ithacus-synth <runId> [majority|weighted|first]";
+    const method = (parts[1] as 'majority' | 'weighted' | 'first') ?? 'majority';
+    const sStore = new SwarmStore(runtime.store.db);
+    const got = sStore.getSwarmResult(runId);
+    if (!got) return `swarm run ${runId} not found`;
+    const contribs = got.results
+      .filter((r) => r.success && r.output !== undefined)
+      .map((r) => ({ agent: r.itemName, output: r.output }));
+    if (contribs.length === 0) return `swarm run ${runId} has no successful results to synthesize`;
+    const synth = synthesize(contribs, method);
+    return JSON.stringify({
+      output: synth.output,
+      score: synth.score,
+      conflicts: synth.conflicts.length,
+      attribution: synth.attribution.length,
+      method: synth.method,
+    });
+  });
 }

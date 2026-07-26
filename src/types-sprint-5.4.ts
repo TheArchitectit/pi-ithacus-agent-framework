@@ -18,6 +18,8 @@ export interface SwarmItemResult {
 
 /** Aggregated result of a full swarm dispatch. */
 export interface SwarmResult {
+  /** Persistence key (set by SwarmStore.getSwarmResult on read). */
+  runId?: string;
   swarmName: string;
   total: number;
   successful: number;
