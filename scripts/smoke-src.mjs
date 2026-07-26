@@ -3117,6 +3117,48 @@ const s8 = synthesize([
 check('synth.object output', s8.output?.result === true);
 check('synth.object score 1', s8.score === 1);
 
+// === P1 fix: blockedWaitMs no hang ===
+const exLk = mkSwarmExec5d({ A: { output: 'a' }, B: { throw: 'B failed' } });
+const orchLk = createSwarmOrchestrator(exLk);
+const qLk = orchLk.getQueue();
+const idALk = qLk.addItem({ name: 'A', priority: 0 });
+const idBLk = qLk.addItem({ name: 'B', priority: 1, dependsOn: [idALk] });  // will fail
+qLk.addItem({ name: 'C', priority: 2, dependsOn: [idBLk] });  // stays blocked (B failed)
+// Use a short blockedWaitMs + small maxBlockedPolls so the test returns fast
+const rLk = await orchLk.dispatch({ swarmName: 'lk', blockedWaitMs: 5, maxBlockedPolls: 3 });
+check('swarm.blockedWaitMs no hang returns', rLk !== undefined && rLk.swarmName === 'lk');
+check('swarm.blockedWaitMs C remains blocked', rLk.blocked === 1);
+check('swarm.blockedWaitMs A done', rLk.successful === 1);
+check('swarm.blockedWaitMs B failed', rLk.failed === 1);
+
+// === P2 fix: maxItems no stranded 'now' ===
+const exStrand = mkSwarmExec5d({ A: { output: 'a' }, B: { output: 'b' }, C: { output: 'c' } });
+const orchStrand = createSwarmOrchestrator(exStrand);
+const qStrand = orchStrand.getQueue();
+qStrand.addItem({ name: 'A', priority: 0 });
+qStrand.addItem({ name: 'B', priority: 1 });
+qStrand.addItem({ name: 'C', priority: 2 });
+const rStrand = await orchStrand.dispatch({ swarmName: 'strand', maxItems: 2 });
+check('swarm.maxItems no strand: results 2', rStrand.results.length === 2);
+// no item should be stuck in 'now' status
+const nowItems = qStrand.getItems('now');
+check('swarm.maxItems no stranded now', nowItems.length === 0);
+// the third item should still be 'next' (unclaimed)
+const nextItems = qStrand.getItems('next');
+check('swarm.maxItems remainder is next', nextItems.length === 1 && nextItems[0].name === 'C');
+
+// === P3 fix: executor.dispatch throws → captured as failure ===
+const exThrow = { dispatch: async (item) => { throw new Error('executor crashed'); }, now: () => Date.now() };
+const orchThrow = createSwarmOrchestrator(exThrow);
+const qThrow = orchThrow.getQueue();
+qThrow.addItem({ name: 'X', priority: 0 });
+const rThrow = await orchThrow.dispatch({ swarmName: 'throw' });
+check('swarm.executor throw captured', rThrow.failed === 1 && rThrow.results[0].error?.includes('executor crashed'));
+
+// === P3 fix: detectConflicts resolution message by method ===
+const wConf = synthesize([{ agent: 'a1', output: 'X' }, { agent: 'a2', output: 'Y' }], 'weighted');
+check('synth.weighted conflict resolution mentions method', wConf.conflicts[0]?.resolution?.includes('weighted'));
+
 } // end Sprint 5.4 block
 
 rmSync(buildDir, { recursive: true, force: true });

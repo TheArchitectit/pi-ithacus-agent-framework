@@ -96,18 +96,24 @@ export class SwarmOrchestrator {
     maxItems?: number;
     /** poll interval ms when blocked (default 0 = no wait, return immediately if blocked). */
     blockedWaitMs?: number;
+    /** max blocked-wait poll iterations before giving up (default 100). */
+    maxBlockedPolls?: number;
     /** optional hive dirs for audit logging. */
     dirs?: HiveDirs;
   }): Promise<SwarmResult> {
     const start = this.executor.now();
     const enableCheckpoint = opts.enableCheckpoint ?? true;
     const interval = opts.checkpointInterval ?? 30;
+    const maxBlockedPolls = opts.maxBlockedPolls ?? 100;
     const results: SwarmItemResult[] = [];
     const checkpoints: QueueCheckpoint[] = [];
     let processed = 0;
     const max = opts.maxItems ?? 0;
     let blocked = 0;
+    let polls = 0;
     while (true) {
+      // P2: check max BEFORE claiming an item (getReadyItems moves it to 'now')
+      if (max > 0 && processed >= max) break;
       const ready = this.queue.getReadyItems(1);
       if (ready.length === 0) {
         // check if there are next items still blocked
@@ -117,6 +123,8 @@ export class SwarmOrchestrator {
         if (blockedItems.length > 0 && nextItems.length === 0) {
           blocked = blockedItems.length;
           if (opts.blockedWaitMs && opts.blockedWaitMs > 0) {
+            // P1: cap polls to avoid livelock when deps failed (no progress possible)
+            if (++polls > maxBlockedPolls) break;
             await sleep(opts.blockedWaitMs);
             continue;  // re-check after wait
           }
@@ -124,9 +132,15 @@ export class SwarmOrchestrator {
         }
         break;  // no ready items
       }
+      polls = 0;  // item ready → reset no-progress counter
       const item = ready[0];
-      if (max > 0 && processed >= max) break;
-      const r = await this.executor.dispatch(item);
+      // P3: capture a throwing executor as a failure (don't crash/strand the item)
+      let r: SwarmItemResult;
+      try {
+        r = await this.executor.dispatch(item);
+      } catch (err) {
+        r = { itemId: item.id, itemName: item.name, success: false, error: err instanceof Error ? err.message : String(err), durationMs: 0 };
+      }
       results.push(r);
       processed++;
       if (r.success) this.queue.complete(item.id, typeof r.output === 'string' ? r.output : JSON.stringify(r.output));

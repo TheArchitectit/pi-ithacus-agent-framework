@@ -26,7 +26,7 @@ interface MergeResult {
 }
 
 /** Detect conflicts among contributions (contradictory string outputs). */
-export function detectConflicts(contribs: AgentContribution[]): Array<{ description: string; resolution: string }> {
+export function detectConflicts(contribs: AgentContribution[], method: SynthesisMethod = 'majority'): Array<{ description: string; resolution: string }> {
   const conflicts: Array<{ description: string; resolution: string }> = [];
   // group by normalized string output
   const groups = new Map<string, string[]>();
@@ -40,7 +40,7 @@ export function detectConflicts(contribs: AgentContribution[]): Array<{ descript
     const desc = Array.from(groups.entries()).map(([out, agents]) => `${agents.join(',')} => ${out.slice(0, 50)}`).join(' | ');
     conflicts.push({
       description: `${groups.size} distinct outputs from ${contribs.length} agents: ${desc}`,
-      resolution: 'majority vote selected; conflicts logged',
+      resolution: `${method} vote selected; conflicts logged`,
     });
   }
   return conflicts;
@@ -107,7 +107,7 @@ export function synthesize(contribs: AgentContribution[], method: SynthesisMetho
   if (contribs.length === 1) {
     return { output: contribs[0].output, attribution: [{ agent: contribs[0].agent, contribution: JSON.stringify(contribs[0].output), weight: 1 }], conflicts: [], score: 1, method };
   }
-  const conflicts = detectConflicts(contribs);
+  const conflicts = detectConflicts(contribs, method);
   let merged: MergeResult;
   if (method === 'majority') merged = majorityVote(contribs);
   else if (method === 'weighted') merged = weightedMerge(contribs);
