@@ -100,7 +100,7 @@ npm install && npm run build
 
 ## License
 
-MIT
+BSD 3-Clause
 
 ## ☕ Support
 
