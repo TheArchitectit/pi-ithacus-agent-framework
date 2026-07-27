@@ -1,21 +1,25 @@
 # pi-ithacus-agent-framework
 
-Brings popular agentic coding styles into [pi](https://github.com/earendil-works/pi). You get structured agent workflows, guardrails, task tracking, and a setup flow that makes spawning sub-agents and agents easy to navigate.
+Brings popular agentic coding styles into [pi](https://github.com/earendil-works/pi). The goal: structured agent workflows, guardrails, task tracking, and a setup flow that makes spawning sub-agents and agents easy to navigate.
 
-## What it does
+## What's here now
 
-- **Agent workflows** — structured sprint tasks, review cycles, and multi-agent routing without the boilerplate
 - **Guardrails** — prevention rules and pattern matching that keep agents from going off the rails
-- **Sub-agent setup** — pairs with [pi-setup](https://github.com/TheArchitectit/pi-setup) to give you a clean React dashboard for configuring agents and sub-agents — no JSON editing
-- **LSP integration** — your agents see real diagnostics, definitions, and references, not just raw text
-- **Cost tracking** — token usage and spend across providers, per-agent
+- **Sprint task framework** — structured task tracking and sprint planning
 - **Checkpoint system** — session state persists and recovers cleanly across restarts
-- **Compact context** — vector-backed compression for long sessions, so your agents don't lose the thread
 - **Model profiles** — multi-provider routing with per-agent model assignment
+- **Cost tracking** — token usage and spend across providers, per-agent
+
+## What's coming
+
+- **Sub-agent setup dashboard** — React web UI pairing with [pi-setup](https://github.com/TheArchitectit/pi-setup) for configuring agents and sub-agents without editing JSON. Same dashboard style as [pi-mega-compact](https://github.com/TheArchitectit/pi-mega-compact)
+- **LSP integration** — agents see real diagnostics, definitions, and references, not just raw text
+- **Compact context** — vector-backed compression for long sessions, so your agents don't lose the thread
+- **Multi-agent routing** — task routing and review workflows across multiple agents
 
 ## How it fits in
 
-Install this alongside [pi-mega-compact](https://github.com/TheArchitectit/pi-mega-compact) for context compression and pi-setup for the React config dashboard. Together they give you a full agentic coding environment that runs locally with any OpenAI-compatible provider — local or cloud.
+Install alongside [pi-mega-compact](https://github.com/TheArchitectit/pi-mega-compact) for context compression and pi-setup for the React config dashboard. Together they give you a full agentic coding environment that runs with any OpenAI-compatible provider — local or cloud.
 
 ## Install
 
