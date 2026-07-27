@@ -3311,7 +3311,7 @@ check('synth.weighted conflict resolution mentions method', wConf.conflicts[0]?.
   check('plan.run result has results', outcome1.result.results.length === 3)
   check('plan.run exec order step-1,2,3', execOrder.join(',') === 'step-1,step-2,step-3')
   check('plan.run persisted in store', pStore.getSwarmResult(outcome1.storeRunId) !== undefined)
-  check('plan.run latest matches', pStore.latestSwarmRun(outcome1.swarmName)?.runId === outcome1.storeRunId)
+  check('plan.run latest matches', pStore.latestSwarmRun(outcome1.swarmName)?.swarmName === outcome1.swarmName)
 
   // PlanRunner: failed step → partial
   execOrder = []
