@@ -18,6 +18,7 @@ import { validatePrompt } from "../src/validator.js";
 import { runSwarm, type SwarmSpec } from "./ithacus-swarm.js";
 import { SwarmStore } from "../src/store-swarm.js";
 import { synthesize } from "../src/synthesis.js";
+import { executePlan } from "./ithacus-plan.js";
 
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
@@ -181,5 +182,44 @@ export function registerTeamCommands(
       attribution: synth.attribution.length,
       method: synth.method,
     });
+  });
+
+  // ---- /ithacus-plan <goal> [roles...] (Sprint 5.6) ----------------------
+  //   Synthesize a plan from a goal + agent roster, dispatch via swarm, persist.
+  //   usage: /ithacus-plan <goal> [role1 role2 ...]
+  //     e.g. /ithacus-plan "investigate auth module" Explore Plan Verification
+  pi.registerCommand('ithacus-plan', async (args, ctx) => {
+    runtime.bindRepo(ctx.cwd);
+    const raw = (args as string)?.trim() ?? '';
+    const parts = raw.split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return 'usage: /ithacus-plan <goal> [role1 role2 ...]';
+
+    // Heuristic: if last tokens match known roles, treat them as roles; rest is goal.
+    const KNOWN_ROLES = ['Explore', 'Plan', 'Verification', 'Reviewer'];
+    const roles: string[] = [];
+    let goalParts = [...parts];
+    while (goalParts.length > 1 && KNOWN_ROLES.includes(goalParts[goalParts.length - 1])) {
+      roles.unshift(goalParts.pop()!);
+    }
+    const goal = goalParts.join(' ');
+    if (!goal) return 'usage: /ithacus-plan <goal> [role1 role2 ...]';
+
+    try {
+      const resolved = captureResolved(ctx);
+      const model = resolveAgentModel(null, resolved);
+      const agents = roles.length > 0
+        ? roles.map(r => ({ role: r }))
+        : [{ role: 'Explore' }];
+      const outcome = await executePlan({
+        pi,
+        runtime,
+        goal,
+        agents,
+        model,
+      });
+      return `plan "${goal.slice(0, 50)}": ${outcome.successful}/${outcome.total} ok (storeRunId=${outcome.storeRunId}, swarm=${outcome.swarmName})`;
+    } catch (e) {
+      return `plan failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
   });
 }

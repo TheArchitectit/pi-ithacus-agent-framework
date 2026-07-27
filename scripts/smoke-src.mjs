@@ -73,6 +73,7 @@ const { AgentHandoffManager, createHandoffManager } = await import(join(buildDir
 const { SwarmOrchestrator, createSwarmOrchestrator, initHive, teardownHive, acquireHiveLock, writeArtifact, appendAudit, listHiveDir } = await import(join(buildDir, 'swarm.ts'))
 const { synthesize, majorityVote, weightedMerge, firstWins, detectConflicts } = await import(join(buildDir, 'synthesis.ts'))
 const { SwarmStore, createSwarmStore } = await import(join(buildDir, 'store-swarm.ts'))
+const { PlanSynthesizer, createPlanSynthesizer, PlanRunner, createPlanRunner } = await import(join(buildDir, 'plan.ts'))
 
 let failures = 0;
 function check(name, cond) {
@@ -3247,6 +3248,127 @@ check('synth.weighted conflict resolution mentions method', wConf.conflicts[0]?.
   check('swarmstore.same-ms list newer first', sameList[0].runId === sameMs2)
   st5e.close()
   rmSync(swarmTmp, { recursive: true, force: true })
+}
+
+// ---- plan synthesis + dispatch (Sprint 5.6) -------------------------------
+{
+  // PlanSynthesizer: linear pipeline from agents
+  const synth = createPlanSynthesizer(() => 42000)
+  const req1 = { goal: 'investigate auth module', agents: [{ role: 'Explore' }, { role: 'Plan' }, { role: 'Verification' }] }
+  const t1 = synth.synthesize(req1)
+  check('plan.synth name', t1.name.startsWith('plan-'))
+  check('plan.synth description', t1.description === 'investigate auth module')
+  check('plan.synth 3 steps', t1.steps.length === 3)
+  check('plan.synth step ids', t1.steps[0].id === 'step-1' && t1.steps[2].id === 'step-3')
+  check('plan.synth step types all task', t1.steps.every(s => s.type === 'task'))
+  check('plan.synth step roles', t1.steps[0].role === 'Explore' && t1.steps[1].role === 'Plan' && t1.steps[2].role === 'Verification')
+  check('plan.synth linear deps', t1.steps[0].dependsOn === undefined && t1.steps[1].dependsOn?.[0] === 'step-1' && t1.steps[2].dependsOn?.[0] === 'step-2')
+  check('plan.synth goal in step 0', t1.steps[0].goal === 'investigate auth module')
+  check('plan.synth metadata', t1.metadata?.agentCount === 3 && t1.metadata?.goalLength === 23)
+  check('plan.synth variables.goal', t1.variables?.goal === 'investigate auth module')
+
+  // PlanSynthesizer: single agent fallback
+  const t2 = synth.synthesize({ goal: 'quick fix', agents: [] })
+  check('plan.synth empty agents fallback', t2.steps.length === 1 && t2.steps[0].role === 'Explore')
+
+  // PlanSynthesizer: single agent explicit
+  const t3 = synth.synthesize({ goal: 'review code', agents: [{ role: 'Reviewer' }] })
+  check('plan.synth single agent', t3.steps.length === 1 && t3.steps[0].role === 'Reviewer')
+  check('plan.synth single no deps', t3.steps[0].dependsOn === undefined)
+
+  // PlanSynthesizer: default role when agent has no role
+  const t4 = synth.synthesize({ goal: 'test', agents: [{}] })
+  check('plan.synth default role', t4.steps[0].role === 'Explore')
+
+  // PlanSynthesizer: validateTemplate passes
+  const { validateTemplate: vt } = await import(join(buildDir, 'workflow-yaml.ts'))
+  check('plan.synth template valid', vt(t1) === null)
+  check('plan.synth single valid', vt(t3) === null)
+
+  // PlanRunner: full pipeline with mock executor
+  let execOrder = []
+  const mockExec = {
+    dispatch: async (item) => {
+      execOrder.push(item.name)
+      const payload = item.payload
+      const prompt = payload?.prompt ?? item.name
+      return { itemId: item.id, itemName: item.name, success: true, output: `done: ${prompt}`, durationMs: 5, role: item.assignedRole }
+    },
+    now: () => 50000,
+  }
+  const planTmp = mkdtempSync(join(tmpdir(), 'ith-plan-'))
+  const planStore = new IthStore(planTmp, cfg.loadConfig())
+  const pStore = new SwarmStore(planStore.db)
+  const runner = createPlanRunner(synth, mockExec, pStore)
+  const outcome1 = await runner.execute(req1)
+  check('plan.run storeRunId starts swarm-', outcome1.storeRunId.startsWith('swarm-'))
+  check('plan.run swarmName starts plan-', outcome1.swarmName.startsWith('plan-'))
+  check('plan.run total 3', outcome1.total === 3)
+  check('plan.run successful 3', outcome1.successful === 3)
+  check('plan.run failed 0', outcome1.failed === 0)
+  check('plan.run blocked 0', outcome1.blocked === 0)
+  check('plan.run synthesis agentCount 3', outcome1.synthesis.agentCount === 3)
+  check('plan.run result has results', outcome1.result.results.length === 3)
+  check('plan.run exec order step-1,2,3', execOrder.join(',') === 'step-1,step-2,step-3')
+  check('plan.run persisted in store', pStore.getSwarmResult(outcome1.storeRunId) !== undefined)
+  check('plan.run latest matches', pStore.latestSwarmRun(outcome1.swarmName)?.runId === outcome1.storeRunId)
+
+  // PlanRunner: failed step → partial
+  execOrder = []
+  const failExec = {
+    dispatch: async (item) => {
+      execOrder.push(item.name)
+      if (item.name === 'step-2') return { itemId: item.id, itemName: item.name, success: false, error: 'step-2 failed', durationMs: 2 }
+      return { itemId: item.id, itemName: item.name, success: true, output: 'ok', durationMs: 3 }
+    },
+    now: () => 51000,
+  }
+  const runner2 = createPlanRunner(synth, failExec, pStore)
+  const failReq = { goal: 'test fail', agents: [{ role: 'Explore' }, { role: 'Plan' }, { role: 'Verification' }] }
+  const outcome2 = await runner2.execute(failReq)
+  check('plan.fail step-2 failed', outcome2.failed === 1)
+  check('plan.fail step-1 done', outcome2.successful >= 1)
+  check('plan.fail step-3 blocked', outcome2.blocked === 1)
+  check('plan.fail exec order', execOrder.includes('step-1') && execOrder.includes('step-2') && !execOrder.includes('step-3'))
+
+  // PlanRunner: 5-step pipeline
+  execOrder = []
+  const bigReq = {
+    goal: 'comprehensive review',
+    agents: [{ role: 'Explore' }, { role: 'Explore' }, { role: 'Plan' }, { role: 'Verification' }, { role: 'Reviewer' }],
+  }
+  const outcome3 = await runner.execute(bigReq)
+  check('plan.big 5 steps total', outcome3.total === 5)
+  check('plan.big all successful', outcome3.successful === 5)
+  check('plan.big exec order 5', execOrder.length === 5)
+  check('plan.big linear order', execOrder[0] === 'step-1' && execOrder[4] === 'step-5')
+
+  // PlanRunner: single agent
+  execOrder = []
+  const singleReq = { goal: 'quick fix', agents: [{ role: 'Explore' }] }
+  const outcome4 = await runner.execute(singleReq)
+  check('plan.single 1 step', outcome4.total === 1 && outcome4.successful === 1)
+  check('plan.single exec order 1', execOrder.length === 1)
+
+  // PlanRunner: empty agents -> default Explore
+  execOrder = []
+  const emptyReq = { goal: 'default task', agents: [] }
+  const outcome5 = await runner.execute(emptyReq)
+  check('plan.empty default 1 step', outcome5.total === 1)
+
+  // PlanRunner: result round-trips through store
+  const stored = pStore.getSwarmResult(outcome1.storeRunId)
+  check('plan.stored name matches', stored?.swarmName === outcome1.swarmName)
+  check('plan.stored results 3', stored?.results.length === 3)
+  check('plan.stored result output', stored?.results[0]?.output === 'done: investigate auth module')
+  check('plan.stored result role', stored?.results[0]?.role === 'Explore')
+
+  // createPlanRunner factory
+  const runner3 = createPlanRunner(synth, mockExec, pStore)
+  check('plan.factory works', runner3 !== undefined)
+
+  planStore.close()
+  rmSync(planTmp, { recursive: true, force: true })
 }
 
 rmSync(buildDir, { recursive: true, force: true });
