@@ -45,7 +45,10 @@ CREATE INDEX IF NOT EXISTS ix_ith_swarm_runs_name ON ith_swarm_runs(swarmName);
 CREATE INDEX IF NOT EXISTS ix_ith_swarm_results_run ON ith_swarm_results(runId);
 `;
 
-let swarmRunCounter = 0;
+// Instance-unique counter: seeded from Date.now() so separate module instances
+// (e.g. smoke test file-copy imports) produce non-colliding runIds even when
+// sharing the same SQLite DB.
+let swarmRunCounter = Date.now() % 100000;
 
 interface SwarmRunRow {
   runId: string;
@@ -78,7 +81,10 @@ export class SwarmStore {
 
   /** Persist a full SwarmResult atomically; returns the generated runId. */
   saveSwarmResult(result: SwarmResult, now: number): string {
-    const runId = `swarm-${now.toString(36)}-${(swarmRunCounter++).toString(36)}`;
+    // Use Date.now() for runId uniqueness (not the caller's `now` which may be
+    // a fixed mock value). This prevents UNIQUE collisions across separate module
+    // instances sharing the same SQLite DB (e.g. smoke test file-copy imports).
+    const runId = `swarm-${Date.now().toString(36)}-${(swarmRunCounter++).toString(36)}`;
     this.db.exec('BEGIN');
     try {
       this.db.prepare(
