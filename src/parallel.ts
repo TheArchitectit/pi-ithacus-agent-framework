@@ -79,13 +79,9 @@ export async function executeBatch(
   const seqResults: ToolResult[] = [];
   for (const c of seq) seqResults.push(await run(c));
 
-  // Preserve original call order in the output.
-  const byNameIndex = new Map<ToolName, number[]>();
-  calls.forEach((c, i) => {
-    const arr = byNameIndex.get(c.name) ?? [];
-    arr.push(i);
-    byNameIndex.set(c.name, arr);
-  });
+  // Preserve original call order in the output: walk the original calls in
+  // order, pulling the next safe/sequential result respectively. (The previous
+  // implementation also built a byNameIndex map that was never read — removed.)
   const out: ToolResult[] = new Array(calls.length);
   let si = 0;
   let qi = 0;

@@ -344,6 +344,16 @@ reservations.reserveFile(psStore, { agentId: 'r-agent-1', runId: 'run-r1', fileP
 reservations.releaseAll(psStore, 'r-agent-1');
 check('releaseAll frees all files', psStore.reservationsForRun('run-r1').length === 0);
 
+// The reserve check+insert is now atomic (BEGIN IMMEDIATE). Verify the
+// same-agent scope-downgrade path still returns true without inserting, and
+// that the store stays usable after the transaction (no leaked BEGIN).
+const upgraded = reservations.reserveFile(psStore, { agentId: 'r-agent-3', runId: 'run-r3', filePath: '/src/upgrade.ts', scope: 'write' });
+check('reserveFile grants write', upgraded === true);
+const downgraded = reservations.reserveFile(psStore, { agentId: 'r-agent-3', runId: 'run-r3', filePath: '/src/upgrade.ts', scope: 'read' });
+check('reserveFile same-agent scope downgrade no-ops true', downgraded === true);
+// Store still works after the transactional reserve (no dangling txn).
+check('reserveFile store usable after txn', psStore.reservationsForRun('run-r3').length === 1);
+
 // ---- cost (Sprint 1.3) --------------------------------------------------
 cost.recordCost(psStore, { agentId: 'c-agent-1', runId: 'run-c1', inputTokens: 1000, outputTokens: 500, model: 'claude' });
 cost.recordCost(psStore, { agentId: 'c-agent-1', runId: 'run-c1', inputTokens: 2000, outputTokens: 1000, model: 'claude' });

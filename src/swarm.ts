@@ -7,7 +7,7 @@
  * (Sprint 5.1) + injectable SwarmExecutor (real agent dispatch in extensions/).
  */
 
-import { mkdirSync, existsSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, rmSync, readdirSync, openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { WorkQueue } from './queue.js';
 import type { WorkItem, QueueCheckpoint } from './types-sprint-5.1.js';
@@ -47,11 +47,22 @@ export function teardownHive(root: string): void {
   if (existsSync(root)) rmSync(root, { recursive: true, force: true });
 }
 
-/** Acquire a hive lock (file-based, advisory). Returns release fn or null if held. */
+/**
+ * Acquire a hive lock (file-based, advisory). Returns release fn or null if
+ * held. Uses O_EXCL (openSync 'wx') so creation is atomic: two concurrent
+ * callers cannot both pass an existsSync check and both "acquire". On 'wx'
+ * failure (EEXIST) we treat the lock as held.
+ */
 export function acquireHiveLock(dirs: HiveDirs, lockName: string, holder: string): (() => void) | null {
   const lockPath = join(dirs.locks, `${lockName}.lock`);
-  if (existsSync(lockPath)) return null;
-  writeFileSync(lockPath, JSON.stringify({ holder, ts: Date.now() }));
+  try {
+    // Atomically create the lock file. If it already exists this throws EEXIST.
+    const fd = openSync(lockPath, 'wx');
+    writeFileSync(fd, JSON.stringify({ holder, ts: Date.now() }));
+    closeSync(fd);
+  } catch {
+    return null; // lock already held (or unwritable)
+  }
   return () => { try { rmSync(lockPath); } catch { /* already removed */ } };
 }
 

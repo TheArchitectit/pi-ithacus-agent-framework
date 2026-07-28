@@ -91,20 +91,39 @@ export class PresenceStore {
   }
 
   // ---- reservations ----
+  /**
+   * Atomically claim a write/edit reservation on a file path. The check-then-
+   * insert is wrapped in BEGIN IMMEDIATE so two concurrent callers cannot both
+   * observe "no existing reservation" and both insert (a TOCTOU that would
+   * grant conflicting write access). read-scope reservations never block.
+   */
   reserve(r: FileReservation): boolean {
-    const existing = this.db.prepare(
-      `SELECT * FROM ith_reservations WHERE filePath = ? AND scope IN ('write','edit')`,
-    ).get(r.filePath) as FileReservation | undefined;
-    if (existing && existing.agentId !== r.agentId) return false;
-    if (existing && existing.agentId === r.agentId) {
-      const scopeRank: Record<string, number> = { read: 0, edit: 1, write: 2 };
-      if ((scopeRank[r.scope] ?? 0) < (scopeRank[existing.scope] ?? 0)) return true;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.db.prepare(
+        `SELECT * FROM ith_reservations WHERE filePath = ? AND scope IN ('write','edit')`,
+      ).get(r.filePath) as FileReservation | undefined;
+      if (existing && existing.agentId !== r.agentId) {
+        this.db.exec('COMMIT');
+        return false;
+      }
+      if (existing && existing.agentId === r.agentId) {
+        const scopeRank: Record<string, number> = { read: 0, edit: 1, write: 2 };
+        if ((scopeRank[r.scope] ?? 0) < (scopeRank[existing.scope] ?? 0)) {
+          this.db.exec('COMMIT');
+          return true;
+        }
+      }
+      this.db.prepare(
+        `INSERT OR REPLACE INTO ith_reservations (agentId, runId, filePath, scope, createdAt)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(r.agentId, r.runId, r.filePath, r.scope, r.createdAt);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (e) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
     }
-    this.db.prepare(
-      `INSERT OR REPLACE INTO ith_reservations (agentId, runId, filePath, scope, createdAt)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(r.agentId, r.runId, r.filePath, r.scope, r.createdAt);
-    return true;
   }
   release(agentId: string, filePath?: string): void {
     if (filePath) {

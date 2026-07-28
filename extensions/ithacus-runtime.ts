@@ -12,7 +12,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { IthStore, repoIdFromCwd } from "../src/store.js";
 import { repoStateDir, STATE_DIR_DEFAULT, type IthacusConfig } from "../src/config.js";
 import { resolveRepoRoot } from "../src/config.js";
@@ -48,7 +48,17 @@ export class IthRuntime {
     if (key === this.activeRepoRoot) return;
     this.activeRepoRoot = key;
     this.currentStateDir = dir;
+    // Close the previous store's SQLite handle before replacing it. Each
+    // bindRepo opened a new DatabaseSync and orphaned the old handle, which
+    // accumulated across repo switches and across the multiple command
+    // handlers that call bindRepo(ctx.cwd) in one session.
+    const prev = this.store;
     this.store = new IthStore(cwd, this.config);
+    try {
+      prev.close();
+    } catch {
+      /* previous handle may already be closed; non-fatal */
+    }
   }
 
   /** Append a structured line to the repo's events.log (always-on diagnostics). */
@@ -86,10 +96,12 @@ export class IthRuntime {
    * Write a dashboard snapshot to dashboard.json (best-effort + non-fatal).
    * Kept cheap so it can be called from every event handler without thrashing.
    */
-  snapshotIfReady(ctx?: ExtensionContext): void {
+  snapshotIfReady(_ctx?: ExtensionContext): void {
     try {
-      const { writeFileSync } = require("node:fs");
-      const { join } = require("node:path");
+      // writeFileSync/join are imported at the top of the module. The previous
+      // code used require("node:fs"/"node:path") which is undefined in ESM
+      // (package.json is "type":"module") -> ReferenceError, swallowed by this
+      // catch -> the snapshot was NEVER written.
       const snap = {
         version: 1,
         updatedAt: new Date().toISOString(),
