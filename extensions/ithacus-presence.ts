@@ -5,7 +5,7 @@
  */
 
 import type { IthRuntime } from './ithacus-runtime.js';
-import type { PresenceStore } from '../src/store-presence.js';
+import { PresenceStore } from '../src/store-presence.js';
 import { joinPresence, leavePresence, heartbeat, detectStuck } from '../src/presence.js';
 import { releaseAll } from '../src/reservations.js';
 

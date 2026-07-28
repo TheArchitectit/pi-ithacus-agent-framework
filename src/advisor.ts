@@ -14,7 +14,7 @@ export const DEFAULT_ADVISOR_BUDGET = 10;
 let noteCounter = 0;
 
 /** Mutable per-session advisor state (budget + emitted notes). */
-class AdvisorSession {
+export class AdvisorSession {
   readonly budget: number;
   private notes: AdvisorNote[] = [];
   private seenTexts = new Set<string>();

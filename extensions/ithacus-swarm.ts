@@ -1,14 +1,15 @@
 /**
  * ithacus-swarm.ts — pi adapter for swarm dispatch (feat 4.23).
  *
- * Bridges the pi-agnostic SwarmOrchestrator (src/swarm.ts) to pi's native
- * Agent tool: PiSwarmExecutor implements SwarmExecutor by dispatching each
- * work item through pi.callTool('Agent', ...). runSwarm() builds a WorkQueue
- * from a SwarmSpec, runs the orchestrator, and persists the SwarmResult via
- * SwarmStore. This is the adapter layer — pi types live only here.
+ * Bridges the pi-agnostic SwarmOrchestrator (src/swarm.ts) to pi's sub-agent
+ * mechanism: PiSwarmExecutor implements SwarmExecutor by dispatching each
+ * work item through a SpawnSubAgent callback that the caller wires to
+ * ExtensionCommandContext.newSession + withSession. runSwarm() builds a
+ * WorkQueue from a SwarmSpec, runs the orchestrator, and persists the
+ * SwarmResult via SwarmStore. This is the adapter layer — pi types live
+ * only in the caller, not in src/.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { join } from "node:path";
 import { WorkQueue } from "../src/queue.js";
@@ -46,11 +47,19 @@ export interface SwarmRunOutcome {
 }
 
 /**
- * SwarmExecutor backed by pi's native Agent tool. Each work item is dispatched
- * as a general-purpose sub-agent with a role-prefixed prompt.
+ * A function that spawns a sub-agent for a work item and returns its output.
+ * The extension layer wires this to pi's sub-session mechanism
+ * (ExtensionCommandContext.newSession + withSession); the logic layer never
+ * touches pi directly (PREVENT-ITH-004).
+ */
+export type SpawnSubAgent = (prompt: string, opts: { role: string; itemName: string; model?: string }) => Promise<{ output: string; cancelled?: boolean }>;
+
+/**
+ * SwarmExecutor backed by an injected sub-agent spawner. Each work item is
+ * dispatched as a general-purpose sub-agent with a role-prefixed prompt.
  */
 export class PiSwarmExecutor implements SwarmExecutor {
-  constructor(private pi: ExtensionAPI, private model?: string) {}
+  constructor(private spawn: SpawnSubAgent, private model?: string) {}
 
   now(): number { return Date.now(); }
 
@@ -64,19 +73,15 @@ export class PiSwarmExecutor implements SwarmExecutor {
     const role = item.assignedRole ?? 'general';
     const fullPrompt = `[ithacus-swarm ${role}] ${prompt}`;
     try {
-      const out: unknown = await this.pi.callTool?.('Agent', {
-        description: `ithacus-${role}-${item.name}`,
-        prompt: fullPrompt,
-        subagent_type: 'general-purpose',
-        ...(this.model ? { model: this.model } : {}),
+      const { output, cancelled } = await this.spawn(fullPrompt, {
+        role,
+        itemName: item.name,
+        model: this.model,
       });
-      const text = typeof out === 'string' ? out
-        : (out && typeof out === 'object' && 'text' in out)
-          ? String((out as { text: unknown }).text)
-        : (out && typeof out === 'object' && 'content' in out)
-          ? String((out as { content: unknown }).content)
-          : JSON.stringify(out);
-      return { itemId: item.id, itemName: item.name, success: true, output: text, durationMs: Date.now() - start, role };
+      if (cancelled) {
+        return { itemId: item.id, itemName: item.name, success: false, error: 'cancelled', durationMs: Date.now() - start, role };
+      }
+      return { itemId: item.id, itemName: item.name, success: true, output, durationMs: Date.now() - start, role };
     } catch (e) {
       return {
         itemId: item.id,
@@ -96,7 +101,7 @@ export class PiSwarmExecutor implements SwarmExecutor {
  * at 1 and increments per addItem on a fresh queue, so item i = id i+1).
  */
 export async function runSwarm(opts: {
-  pi: ExtensionAPI;
+  spawn: SpawnSubAgent;
   runtime: IthRuntime;
   spec: SwarmSpec;
   model?: string;
@@ -120,7 +125,7 @@ export async function runSwarm(opts: {
     });
   }
 
-  const executor = new PiSwarmExecutor(opts.pi, opts.model);
+  const executor = new PiSwarmExecutor(opts.spawn, opts.model);
   const orch = new SwarmOrchestrator(executor, queue);
 
   let hiveDirs: HiveDirs | undefined;

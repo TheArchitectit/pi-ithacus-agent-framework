@@ -4,7 +4,7 @@
  */
 
 import type { IthRuntime } from './ithacus-runtime.js';
-import type { ModelProfileStore } from '../src/store-model-profiles.js';
+import { ModelProfileStore } from '../src/store-model-profiles.js';
 import type { ModelProfile } from '../src/types.js';
 import { seedProfiles, BUILTIN_PROFILES } from '../src/model-profiles.js';
 

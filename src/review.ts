@@ -55,8 +55,13 @@ export function buildVerdict(findings: ReviewFinding[]): ReviewVerdict {
       summary: 'No issues found. Approved.',
     };
   }
+  // Find the highest-severity finding (lowest rank number = worst). Compare
+  // against worst.priority, not worst itself: without an initial accumulator,
+  // reduce treats the first element as the accumulator, so a naive
+  // priorityRank(worst) would receive a ReviewFinding object instead of its
+  // priority string and always return undefined — masking a P0 behind a P3.
   const top = findings.reduce((worst, f) =>
-    priorityRank(f.priority) < priorityRank(worst) ? f : worst,
+    priorityRank(f.priority) < priorityRank(worst.priority) ? f : worst,
   );
   // Confidence: average of finding confidences, scaled down with more findings.
   const avgConf = Math.round(findings.reduce((s, f) => s + f.confidence, 0) / findings.length);

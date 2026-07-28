@@ -8,7 +8,7 @@
  * are applied here at spawn time.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type IthRuntime } from "./ithacus-runtime.js";
 import { type IthacusConfig, type ModePreset } from "../src/config.js";
 import {
@@ -19,6 +19,7 @@ import {
 import type { IthAgent, ModelProfile } from "../src/types.js";
 import { ensureProfiles, parseProfileSelection } from "./ithacus-profiles.js";
 import { resolveProfile, assignRoleProfile } from "../src/model-profiles.js";
+import type { SpawnSubAgent } from "./ithacus-swarm.js";
 
 function genId(prefix: string): string {
   // Date.now/Math.random are unavailable in some sandboxes; use a counter + ms.
@@ -36,7 +37,7 @@ export interface SpawnResult {
  * spawned — it only builds the plan + resolves models + persists the roster.
  */
 export async function createTeam(opts: {
-  pi: ExtensionAPI;
+  spawn: SpawnSubAgent;
   runtime: IthRuntime;
   config: IthacusConfig;
   ctx: ExtensionContext;
@@ -85,21 +86,16 @@ export async function createTeam(opts: {
     agents: plan.agents.length,
   });
 
-  // Dispatch each sub-agent via pi's native Agent tool, with the resolved
-  // (provider-qualified, fallback-ordered) model chain applied.
+  // Dispatch each sub-agent via the injected spawner (wired to pi's sub-
+  // session mechanism by the caller), with the resolved (provider-qualified,
+  // fallback-ordered) model chain applied as guidance.
   const chain = buildModelChain(null, opts.resolved, opts.config.fallbackModels);
   for (const a of plan.agents) {
     const subPrompt = `[ithacus ${a.role}] ${opts.prompt}\nYour role: ${a.role}. Model chain: ${chain.join(", ")}.`;
     try {
-      // PR #3250: inject provider env before building the sub-agent runtime so
-      // custom-openai (set up via /setup) reaches the child. We rely on pi's
-      // Agent tool honoring ctx provider config; the chain is passed as guidance.
-      await opts.pi.callTool?.("Agent", {
-        description: `ithacus-${a.role}`,
-        prompt: subPrompt,
-        subagent_type: "general-purpose",
-        model: a.model,
-      });
+      // The spawn runs the sub-agent to completion via newSession/withSession.
+      // The chain is passed as guidance; the spawned session honors ctx provider config.
+      await opts.spawn(subPrompt, { role: a.role, itemName: a.id, model: a.model ?? undefined });
       a.status = "working";
     } catch (e) {
       a.status = "failed";

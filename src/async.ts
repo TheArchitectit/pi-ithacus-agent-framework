@@ -46,7 +46,7 @@ export function spawnAsyncRun(opts: {
       cwd: opts.cwd,
     });
 
-    const logStream = { flags: 'a' } as const;
+    const logStream = { flag: 'a' };
     child.stdout?.on('data', (d: Buffer) => {
       appendFileSync(log, d, logStream);
     });

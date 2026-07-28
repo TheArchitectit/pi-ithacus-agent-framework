@@ -38,7 +38,7 @@ export function registerSessionHandlers(
     }
   });
 
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (!runtime.config.memoryRecall) return;
     try {
       const repoId = runtime.repoId(ctx.cwd);
@@ -48,16 +48,20 @@ export function registerSessionHandlers(
         .map((m) => `- [${m.kind}] ${m.text}`)
         .join("\n");
       // PREVENT-ITH-003: inject as systemPrompt prepend, never role:"system" message.
-      ctx.systemPrompt = `${ctx.systemPrompt ?? ""}\n\n[ithacus] recalled memory for this repo:\n${block}`;
+      // pi consumes the systemPrompt field on the handler's RETURN value (it
+      // ignores assignments to ctx.systemPrompt, which has no setter).
+      // Multiple extensions returning systemPrompt are chained, so we
+      // prepend our block to the incoming assembled prompt.
+      const incoming = event.systemPrompt ?? ctx.getSystemPrompt() ?? "";
+      return {
+        systemPrompt: `${incoming}\n\n[ithacus] recalled memory for this repo:\n${block}`,
+      };
     } catch {
       /* non-fatal: memory recall must never break the agent loop */
     }
   });
 
   pi.on("session_shutdown", async () => {
-    runtime.dispose();
-  });
-  pi.on("shutdown", async () => {
     runtime.dispose();
   });
 }

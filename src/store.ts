@@ -173,7 +173,7 @@ export class IthStore {
     ).run(m.id, m.agentId, m.fromAgent, m.payload, m.ts);
   }
   unread(agentId: string): IthInboxMessage[] {
-    return this.db.prepare(`SELECT * FROM ith_inbox WHERE agentId = ? AND read = 0 ORDER BY ts`).all(agentId) as IthInboxMessage[];
+    return this.db.prepare(`SELECT * FROM ith_inbox WHERE agentId = ? AND read = 0 ORDER BY ts`).all(agentId) as unknown as IthInboxMessage[];
   }
   markRead(id: string): void {
     this.db.prepare(`UPDATE ith_inbox SET read = 1 WHERE id = ?`).run(id);
@@ -191,7 +191,7 @@ export class IthStore {
       ? `SELECT * FROM ith_memories WHERE repoId = ? AND kind = ? ORDER BY ts DESC LIMIT ?`
       : `SELECT * FROM ith_memories WHERE repoId = ? ORDER BY ts DESC LIMIT ?`;
     const args = kind ? [repoId, kind, limit] : [repoId, limit];
-    return this.db.prepare(sql).all(...args) as IthMemory[];
+    return this.db.prepare(sql).all(...args) as unknown as IthMemory[];
   }
 
   saveWorktree(w: WorktreeConfig): void {
@@ -242,11 +242,11 @@ export class IthStore {
       | undefined;
   }
   asyncRunsByStatus(status: AsyncRunStatus): AsyncRunState[] {
-    return this.db.prepare(`SELECT * FROM ith_async_runs WHERE status = ?`).all(status) as AsyncRunState[];
+    return this.db.prepare(`SELECT * FROM ith_async_runs WHERE status = ?`).all(status) as unknown as AsyncRunState[];
   }
   setAsyncRunStatus(runId: string, status: AsyncRunStatus, opts?: { pid?: number; exitCode?: number; completedAt?: number; error?: string }): void {
     const parts: string[] = [`status = ?`];
-    const args: unknown[] = [status];
+    const args: Array<string | number> = [status];
     if (opts?.pid !== undefined) { parts.push(`pid = ?`); args.push(opts.pid); }
     if (opts?.exitCode !== undefined) { parts.push(`exitCode = ?`); args.push(opts.exitCode); }
     if (opts?.completedAt !== undefined) { parts.push(`completedAt = ?`); args.push(opts.completedAt); }

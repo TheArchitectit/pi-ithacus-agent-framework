@@ -847,6 +847,18 @@ const nbVerdict = review.buildVerdict(nonBlockerFindings);
 check('review.buildVerdict non-blocker approved', nbVerdict.approved === true);
 check('review.buildVerdict topPriority P2', nbVerdict.topPriority === 'P2');
 
+// Regression: buildVerdict must pick the WORST finding regardless of order.
+// Previously the reduce had no seed, so `worst` was the first element object
+// and priorityRank(worst) returned undefined, making top === findings[0] — a
+// P3 listed first would mask a later P0. Put the P3 first on purpose.
+const orderMattersFindings = [
+  { filePath: '/x.ts', line: 1, priority: 'P3', confidence: 50, message: 'log' },
+  { filePath: '/x.ts', line: 2, priority: 'P0', confidence: 90, message: 'secret' },
+];
+const omVerdict = review.buildVerdict(orderMattersFindings);
+check('review.buildVerdict worst not first (regression)', omVerdict.topPriority === 'P0');
+check('review.buildVerdict worst not first blocked', omVerdict.approved === false);
+
 check('review.findingConfidence clamps', review.findingConfidence({ confidence: 150 }) === 100);
 
 // ---- commits (Sprint 2.3) ----------------------------------------------
