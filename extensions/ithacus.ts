@@ -13,10 +13,15 @@ import { loadConfig } from "../src/config.js";
 import { IthRuntime } from "./ithacus-runtime.js";
 import { registerEventHandlers } from "./ithacus-events/register.js";
 import { registerTeamCommands } from "./ithacus-commands.js";
+import { registerDispatchTool } from "./ithacus-dispatch.js";
 
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
   const runtime = new IthRuntime(config);
   registerEventHandlers(pi, runtime, config);
   registerTeamCommands(pi, runtime, config);
+  // Sprint 5.10: the `ithacus-dispatch` tool is the LLM-invoked entry point
+  // for spawning coordinated sub-agents (real pi subprocess, isolated context,
+  // per-agent model). Clears the phantom `pi.callTool` dispatch for good.
+  registerDispatchTool(pi);
 }

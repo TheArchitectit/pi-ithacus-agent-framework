@@ -16,6 +16,7 @@ import { SwarmOrchestrator, initHive } from "../src/swarm.js";
 import { SwarmStore } from "../src/store-swarm.js";
 import type { SwarmExecutor, SwarmItemResult, SwarmResult, HiveDirs } from "../src/types-sprint-5.4.js";
 import type { WorkItem, WorkPriority } from "../src/types-sprint-5.1.js";
+import { spawnAgent } from "./ithacus-dispatch.js";
 
 /** A single unit of swarm work, declared by the caller. */
 export interface SwarmItemSpec {
@@ -64,19 +65,22 @@ export class PiSwarmExecutor implements SwarmExecutor {
     const role = item.assignedRole ?? 'general';
     const fullPrompt = `[ithacus-swarm ${role}] ${prompt}`;
     try {
-      const out: unknown = await this.pi.callTool?.('Agent', {
-        description: `ithacus-${role}-${item.name}`,
-        prompt: fullPrompt,
-        subagent_type: 'general-purpose',
-        ...(this.model ? { model: this.model } : {}),
+      // Sprint 5.10: dispatch via a real `pi` subprocess (spawnAgent) rather
+      // than the phantom `pi.callTool` (never existed on ExtensionAPI).
+      const res = await spawnAgent({
+        agent: role,
+        task: fullPrompt,
+        model: this.model,
       });
-      const text = typeof out === 'string' ? out
-        : (out && typeof out === 'object' && 'text' in out)
-          ? String((out as { text: unknown }).text)
-        : (out && typeof out === 'object' && 'content' in out)
-          ? String((out as { content: unknown }).content)
-          : JSON.stringify(out);
-      return { itemId: item.id, itemName: item.name, success: true, output: text, durationMs: Date.now() - start, role };
+      return {
+        itemId: item.id,
+        itemName: item.name,
+        success: res.success,
+        output: res.output,
+        error: res.success ? undefined : (res.stderr || res.error),
+        durationMs: Date.now() - start,
+        role,
+      };
     } catch (e) {
       return {
         itemId: item.id,

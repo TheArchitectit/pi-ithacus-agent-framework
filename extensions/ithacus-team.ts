@@ -19,6 +19,7 @@ import {
 import type { IthAgent, ModelProfile } from "../src/types.js";
 import { ensureProfiles, parseProfileSelection } from "./ithacus-profiles.js";
 import { resolveProfile, assignRoleProfile } from "../src/model-profiles.js";
+import { spawnAgent } from "./ithacus-dispatch.js";
 
 function genId(prefix: string): string {
   // Date.now/Math.random are unavailable in some sandboxes; use a counter + ms.
@@ -94,13 +95,17 @@ export async function createTeam(opts: {
       // PR #3250: inject provider env before building the sub-agent runtime so
       // custom-openai (set up via /setup) reaches the child. We rely on pi's
       // Agent tool honoring ctx provider config; the chain is passed as guidance.
-      await opts.pi.callTool?.("Agent", {
-        description: `ithacus-${a.role}`,
-        prompt: subPrompt,
-        subagent_type: "general-purpose",
+      //
+      // Sprint 5.10: dispatch via a real `pi` subprocess (spawnAgent) rather
+      // than the phantom `pi.callTool` (never existed on ExtensionAPI). The
+      // child runs in an isolated context with the per-agent model applied.
+      const res = await spawnAgent({
+        agent: a.role,
+        task: subPrompt,
         model: a.model,
+        cwd: opts.ctx.cwd,
       });
-      a.status = "working";
+      a.status = res.success ? "done" : "failed";
     } catch (e) {
       a.status = "failed";
       opts.runtime.appendEvent("agent_spawn_failed", {
