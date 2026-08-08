@@ -538,6 +538,18 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 ---
 
+### Sprint 5.10 — Dispatch Tool Migration (registerTool + markdown agents) (1 week)
+
+**Features**: Replace phantom `pi.callTool()` dispatch with the canonical `pi.registerTool()` + subprocess-spawn pattern from `pi-subagents`.
+
+**Scope**: `extensions/ithacus-dispatch.ts` (new — registers `ithacus-dispatch` tool via `pi.registerTool()`; `execute()` spawns real `pi` subprocesses per agent with `--model` overrides), `extensions/agents/{explore,plan,verification,worker}.md` (new — ithacus role roster as markdown, matching the `pi-subagents` frontmatter convention), `extensions/ithacus-team.ts` + `extensions/ithacus-swarm.ts` (swap `pi.callTool` → local `spawnAgent` helper). Clears the 2 tsc errors left as the honest red flag from the gate-fix pass — no stubs.
+
+**Dependencies**: None — but unblocks all of TIER 5 (Sprints 5.1–5.9 were all built on the phantom `callTool` and cannot actually run until this lands).
+
+**Approval required**: Yes — architecture decision (dispatch layer re-architecture). Full spec: [DESIGN_DISPATCH_TOOL.md](DESIGN_DISPATCH_TOOL.md).
+
+---
+
 ## Summary
 
 | Tier | Sprints | Weeks | Files Added | Lines Added | Cumulative |

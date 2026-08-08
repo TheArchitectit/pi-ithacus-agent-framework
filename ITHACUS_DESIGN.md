@@ -23,7 +23,7 @@
 |---|-----------|----------------|
 | P1 | The folder `<repo>/.pi/ithacus/` is the project home; bind per-repo via `git rev-parse --show-toplevel`. | mega-compact `repoStateDir()` |
 | P2 | One local `node:sqlite` `DatabaseSync` store is the source of truth. No second process, no remote DB. | mega-compact `sqlite.ts`, PREVENT-PI-004 |
-| P3 | Orchestrate sub-agents as *plans* (mode presets → role roster) dispatched through pi's native agent runtime. | PR #3250 `TeamCreate` |
+| P3 | Orchestrate sub-agents as *plans* (mode presets → role roster) dispatched through pi's native agent runtime — via `pi.registerTool()` + subprocess spawn, **NOT** `pi.callTool()` (phantom API; never existed on `ExtensionAPI`). Spec: [docs/DESIGN_DISPATCH_TOOL.md](docs/DESIGN_DISPATCH_TOOL.md). | PR #3250 `TeamCreate` |
 | P4 | Resolve sub-agent model via `explicit → subagentModel → provider model → default`; `custom/`-qualify for custom-openai. | PR #3250 `resolve_agent_model`, `qualify_for_provider` |
 | P5 | Execute read-only tool calls in parallel, writes sequentially. | PR #3250 `execute_batch` |
 | P6 | Model-call failures (404/not-found) fall through the fallback chain; caller model is primary, fallbacks appended + deduped. | PR #3250 §4 |
