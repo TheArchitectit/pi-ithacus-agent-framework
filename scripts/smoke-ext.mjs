@@ -267,6 +267,51 @@ try {
   // above already covers the AgentToolResult shape.
   check("dispatch.params agent optional", registeredTool?.parameters?.properties?.agent !== undefined);
 
+  // ========================================================================
+  // 4. REGRESSION: published-package layout (v0.1.0 bug repro)
+  // ========================================================================
+  // v0.1.0 shipped ithacus-agents.js in dist/extensions/ but agents at
+  // extensions/agents/ (package root). bundledAgentsDir() resolved to
+  // dist/extensions/agents/ (didn't exist) → "Unknown agent. Available: none".
+  // This test reproduces that EXACT layout so the compiled-layout fallback
+  // path can never break again.
+  {
+    const pubDir = mkdtempSync(join(repoRoot, ".smoke-pub-tmp-"));
+    const distExt = join(pubDir, "dist", "extensions");
+    const pkgAgentsDir = join(pubDir, "extensions", "agents");
+    mkdirSync(distExt, { recursive: true });
+    mkdirSync(pkgAgentsDir, { recursive: true });
+    try {
+      // Copy ithacus-agents.ts into dist/extensions/ (with .js→.ts rewrite).
+      let agentsCode = readFileSync(join(repoRoot, "extensions", "ithacus-agents.ts"), "utf-8");
+      agentsCode = agentsCode.replace(/(from\s+["']\.\.?\/[^"]+)\.js(["'])/g, "$1.ts$2");
+      writeFileSync(join(distExt, "ithacus-agents.ts"), agentsCode);
+      // Copy agent markdown into extensions/agents/ (package-root layout).
+      for (const f of readdirSync(join(repoRoot, "extensions", "agents"))) {
+        if (!f.endsWith(".md")) continue;
+        copyFileSync(join(repoRoot, "extensions", "agents", f), join(pkgAgentsDir, f));
+      }
+      // The SIBLING layout does NOT exist (this is the bug condition):
+      // dist/extensions/agents/ must be absent so the first candidate fails
+      // and the second (package-root) candidate must catch the agents.
+      check("pub.dist/extensions/agents absent (bug condition)", !existsSync(join(distExt, "agents")));
+      check("pub.pkg extensions/agents present", existsSync(pkgAgentsDir));
+      // Load ithacus-agents from dist/extensions/ — import.meta.url now points
+      // there, so bundledAgentsDir() must fall through to the package-root
+      // candidate (../../extensions/agents) to find the agents.
+      const pubMod = await import(join(distExt, "ithacus-agents.ts"));
+      const pubAgents = pubMod.discoverIthacusAgents();
+      check("pub.discovers 4 agents (compiled layout)", pubAgents.length === 4);
+      check("pub.has explore (compiled layout)", pubMod.findAgent(pubAgents, "explore")?.model === "claude-haiku-4-5");
+      check("pub.has plan (compiled layout)", pubMod.findAgent(pubAgents, "Plan")?.name === "plan");
+      check("pub.has verification (compiled layout)", pubMod.findAgent(pubAgents, "verification") !== undefined);
+      check("pub.has reviewer (compiled layout)", pubMod.findAgent(pubAgents, "Reviewer") !== undefined);
+      check("pub.all have systemPrompt (compiled layout)", pubAgents.every((a) => a.systemPrompt.length > 0));
+    } finally {
+      try { rmSync(pubDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
+
   // ---- summary ----------------------------------------------------------
   const passed = checks.filter(([, ok]) => ok).length;
   const failed = checks.length - passed;

@@ -42,10 +42,25 @@ export interface AgentConfig {
   filePath: string;
 }
 
-/** Bundled agents dir: extensions/agents/ (sibling of this file). */
+/**
+ * Bundled agents directory. Resolves robustly across layouts:
+ *   - source / smoke:   <dir>/ithacus-agents.{ts,js} → <dir>/agents/ (sibling)
+ *   - compiled/published: dist/extensions/ithacus-agents.js → ../../extensions/agents/
+ *     (package-root; the tarball ships agents at extensions/agents/, NOT in dist/)
+ * Tries each candidate; returns the first that exists. Falls back to the
+ * source-layout candidate if none exist (discoverIthacusAgents returns [] for
+ * a missing dir, so the error path stays recognizable).
+ */
 function bundledAgentsDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(here, "agents");
+  const candidates = [
+    path.resolve(here, "agents"),                              // source/smoke: sibling
+    path.resolve(here, "..", "..", "extensions", "agents"),     // compiled: package root
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0];
 }
 
 /** Project override dir: <repo>/.pi/ithacus/agents/. */
