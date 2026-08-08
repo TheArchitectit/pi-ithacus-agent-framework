@@ -11,6 +11,9 @@ build/
 *.egg-info/
 target/
 
+# Smoke test temp dirs (created under repo root so typebox resolves)
+.smoke-ext-tmp-*
+
 # IDE
 .idea/
 .vscode/

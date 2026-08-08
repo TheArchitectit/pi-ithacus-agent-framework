@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types scripts/smoke-src.mjs",
+    "test": "node --experimental-strip-types scripts/smoke-src.mjs && node --experimental-strip-types scripts/smoke-ext.mjs",
     "lint": "tsc --noEmit -p tsconfig.json",
     "guardrails": "node scripts/guardrails-scan.mjs",
     "regression": "python3 scripts/regression_check.py --all",

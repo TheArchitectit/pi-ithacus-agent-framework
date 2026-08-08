@@ -57,6 +57,13 @@ export interface SpawnAgentOpts {
   tools?: string[];
   /** Cancellation signal. */
   signal?: AbortSignal;
+  /**
+   * Test seam: inject a fake subprocess spawn. Defaults to the real Node
+   * process-spawn API. Smoke tests inject a stub that emits JSON
+   * `message_end` lines, since real `pi` can't run in the harness (no model
+   * keys / network). Production callers leave this unset.
+   */
+  spawnImpl?: typeof spawn;
 }
 
 export interface SpawnAgentResult {
@@ -179,7 +186,8 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
 
     exitCode = await new Promise<number>((resolve) => {
       const invocation = getPiInvocation(args);
-      const proc = spawn(invocation.command, invocation.args, {
+      const doSpawn = opts.spawnImpl ?? spawn; // test seam: smoke injects a fake
+      const proc = doSpawn(invocation.command, invocation.args, {
         cwd: opts.cwd ?? process.cwd(),
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
