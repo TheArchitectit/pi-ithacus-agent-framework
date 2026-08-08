@@ -50,9 +50,9 @@ cd "$ROOT"
 
 echo "[deploy] ithacus publish pipeline → v$NEW_VERSION"
 echo "[deploy] working dir: $ROOT"
-echo "[deploy] NOTE: ithacus uses --experimental-strip-types at runtime (Node ≥ 22.6)"
-echo "[deploy]       strips TS types natively. gate skips tsc build/lint (pre-existing"
-echo "[deploy]       node:sqlite typing fixes are tracked separately)."
+echo "[deploy] ithacus uses --experimental-strip-types at runtime (Node ≥ 22.6 strips"
+echo "[deploy] TS types natively), but tsc build+lint stay in the gate — type safety"
+echo "[deploy] is enforced, not optional. A failing build means: FIX IT, don't skip it."
 
 # --- 1. clean git tree --------------------------------------------------------
 if ! git diff --quiet; then
@@ -76,8 +76,9 @@ echo "[deploy] git tree clean."
 # since the prior release tag to blocking: this release's commits cannot grow
 # a src/ file past 300 (ext past 400) toward the 500 hard limit — it must be
 # split (delegate-shell + impl) instead of squeezed toward the ceiling.
-echo "[deploy] running gate: smoke + regression + guardrails + semantic + schema-health"
-echo "[deploy]   (tsc build/lint skipped — pre-existing node:sqlite typing fixes tracked separately)"
+echo "[deploy] running gate: build + lint + smoke + regression + guardrails + semantic + schema-health"
+npm run build
+npm run lint
 npm test
 PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
 if [[ -n "$PREV_TAG" ]]; then

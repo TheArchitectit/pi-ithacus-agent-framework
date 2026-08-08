@@ -22,7 +22,7 @@
     "semantic": "node scripts/semantic-scan.mjs",
     "schema-health": "node scripts/schema-health-check.mjs",
     "deploy": "bash scripts/deploy.sh",
-    "gate": "npm run guardrails && npm run semantic && npm run schema-health && npm run regression && npm test"
+    "gate": "npm run build && npm run lint && npm run guardrails && npm run semantic && npm run schema-health && npm run regression && npm test"
   },
   "dependencies": {},
   "devDependencies": {
