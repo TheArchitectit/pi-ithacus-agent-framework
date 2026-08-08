@@ -48,16 +48,16 @@ export function registerSessionHandlers(
         .map((m) => `- [${m.kind}] ${m.text}`)
         .join("\n");
       // PREVENT-ITH-003: inject as systemPrompt prepend, never role:"system" message.
-      ctx.systemPrompt = `${ctx.systemPrompt ?? ""}\n\n[ithacus] recalled memory for this repo:\n${block}`;
+      // before_agent_start result carries systemPrompt: string (the handler RETURNS
+      // the new prompt — it does not mutate ctx, which is read-only here).
+      const sp = ctx.getSystemPrompt();
+      return { systemPrompt: `${sp}\n\n[ithacus] recalled memory for this repo:\n${block}` };
     } catch {
       /* non-fatal: memory recall must never break the agent loop */
     }
   });
 
   pi.on("session_shutdown", async () => {
-    runtime.dispose();
-  });
-  pi.on("shutdown", async () => {
     runtime.dispose();
   });
 }

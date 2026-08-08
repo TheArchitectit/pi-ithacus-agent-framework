@@ -8,7 +8,7 @@
  * commands, expressed as pi registerCommand handlers.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { type IthRuntime } from "./ithacus-runtime.js";
 import { type IthacusConfig } from "../src/config.js";
 import { createTeam, deleteTeam, teamStatus } from "./ithacus-team.js";
@@ -37,7 +37,26 @@ export function registerTeamCommands(
 ): void {
   let teamsEnabled = true;
 
-  pi.registerCommand("ithacus-team", async (args, ctx) => {
+  // Wrap pi.registerCommand: pi's contract is (name, { handler }) — an options
+  // object with a void-returning handler — not a bare async fn. The helper
+  // provides contextual typing so args/ctx are never implicit any, wraps
+  // each handler in { handler }, and adapts the string-returning handlers to
+  // pi's Promise<void> contract via a void wrapper.
+  // TODO(runtime): string returns are currently DISCARDED by the wrapper —
+  // wire to pi.sendMessage({customType:"ithacus-cmd-output",content,display})
+  // + registerMessageRenderer so /ithacus-* output actually displays.
+  const registerCmd = (
+    name: string,
+    handler: (args: string, ctx: ExtensionCommandContext) => Promise<string | void>,
+  ): void => {
+    pi.registerCommand(name, {
+      handler: async (args, ctx) => {
+        await handler(args, ctx);
+      },
+    });
+  };
+
+  registerCmd("ithacus-team", async (args, ctx) => {
     const sub = (args as string)?.trim() ?? "";
     if (sub === "off") {
       teamsEnabled = false;
@@ -74,7 +93,7 @@ export function registerTeamCommands(
     return `ithacus team created: ${res.runId} (${res.agents.length} agents, mode=${preset})`;
   });
 
-  pi.registerCommand("ithacus-status", async (_args, ctx) => {
+  registerCmd("ithacus-status", async (_args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const snap = {
       pressure: runtime.pressure,
@@ -89,7 +108,7 @@ export function registerTeamCommands(
     return JSON.stringify(snap, null, 2);
   });
 
-  pi.registerCommand("ithacus-recall", async (args, ctx) => {
+  registerCmd("ithacus-recall", async (args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const repoId = runtime.repoId(ctx.cwd);
     const mems = runtime.store.recall(repoId, undefined, 8);
@@ -97,7 +116,7 @@ export function registerTeamCommands(
     return mems.map((m) => `[${m.kind}] ${m.text}`).join("\n");
   });
 
-  pi.registerCommand("ithacus-profiles", async (_args, ctx) => {
+  registerCmd("ithacus-profiles", async (_args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const ps = ensureProfiles(runtime);
     const profiles = ps.listProfiles();
@@ -117,7 +136,7 @@ export function registerTeamCommands(
   //   list                  → JSON of recent swarm runs
   //   show <runId>          → JSON of one SwarmResult
   //   <name> <item> ...      → run a pipeline swarm (each item depends on prev)
-  pi.registerCommand("ithacus-swarm", async (args, ctx) => {
+  registerCmd("ithacus-swarm", async (args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const sStore = new SwarmStore(runtime.store.db);
     const raw = (args as string)?.trim() ?? "";
@@ -160,7 +179,7 @@ export function registerTeamCommands(
 
   // ---- /ithacus-synth <runId> [method] (feat 4.24) -----------------------
   // Load a SwarmResult, take successful item outputs as contributions, synthesize.
-  pi.registerCommand("ithacus-synth", async (args, ctx) => {
+  registerCmd("ithacus-synth", async (args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const raw = (args as string)?.trim() ?? "";
     const parts = raw.split(/\s+/).filter(Boolean);
@@ -188,7 +207,7 @@ export function registerTeamCommands(
   //   Synthesize a plan from a goal + agent roster, dispatch via swarm, persist.
   //   usage: /ithacus-plan <goal> [role1 role2 ...]
   //     e.g. /ithacus-plan "investigate auth module" Explore Plan Verification
-  pi.registerCommand('ithacus-plan', async (args, ctx) => {
+  registerCmd('ithacus-plan', async (args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const raw = (args as string)?.trim() ?? '';
     const parts = raw.split(/\s+/).filter(Boolean);
