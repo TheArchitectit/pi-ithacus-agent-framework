@@ -12,6 +12,7 @@
  */
 
 import { MODE_PRESETS, type ModePreset } from "./config.js";
+export type { ModePreset };
 import type { AgentRole, IthAgent, IthRun, IthTask, WorkflowNode } from "./types.js";
 import { generateWaves, validateDag } from "./workflow.js";
 
