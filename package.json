@@ -19,7 +19,10 @@
     "lint": "tsc --noEmit -p tsconfig.json",
     "guardrails": "node scripts/guardrails-scan.mjs",
     "regression": "python3 scripts/regression_check.py --all",
-    "semantic": "node scripts/semantic-scan.mjs"
+    "semantic": "node scripts/semantic-scan.mjs",
+    "schema-health": "node scripts/schema-health-check.mjs",
+    "deploy": "bash scripts/deploy.sh",
+    "gate": "npm run guardrails && npm run semantic && npm run schema-health && npm run regression && npm test"
   },
   "dependencies": {},
   "devDependencies": {
