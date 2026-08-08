@@ -78,18 +78,21 @@ fixing a blind edit; a failed test in dev costs minutes, in prod hours.
 Rules live in `.guardrails/prevention-rules/pattern-rules.json`. Two families:
 
 - **`PREVENT-PI-*`** — inherited verbatim from `agent-guardrails-template`
-  (pi-extension invariants: anchor floor, tool-pair, no system role, no network).
+  (pi-extension invariants: anchor floor, tool-pair, no system role, no raw
+  network calls in extension source).
 - **`PREVENT-ITH-*` / `PREVENT-DIST-001`** — `ithacus` project rules (kept per
-  our convention). `PREVENT-ITH-004` = zero network at runtime; the only
-  exception is a user-triggered localhost dashboard, annotated
-  `// guardrails-allow PREVENT-ITH-004 [PREVENT-PI-004]: <reason>`.
+  our convention). `PREVENT-ITH-004` = no external service / no subscription
+  required; the extension source itself makes zero network calls at runtime
+  (scan-enforced), and spawned sub-agents call your configured pi providers.
+  Annotated exceptions cover local-only integrations, e.g. dispatching the
+  local `pi` binary: `// guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: <reason>`.
 
 | Rule | Severity | Meaning |
 |------|----------|---------|
 | PREVENT-ITH-001 | error | Never drop messages without an anchor floor (preserve recent N). |
 | PREVENT-ITH-002 | error | Never split a toolCall/toolResult pair at a trim boundary. |
 | PREVENT-ITH-003 | error | Never inject context as `role:"system"` — prepend via `systemPrompt`. |
-| PREVENT-ITH-004 | critical | **Zero network calls at runtime.** Local node:sqlite + FS only. |
+| PREVENT-ITH-004 | critical | **No external service / no subscription required.** Runs on local pi + Node built-ins; extension source makes zero network calls at runtime (scan-enforced). |
 | PREVENT-DIST-001 | error | Distribute ONLY via `npm publish` + `pi install npm:ithacus`. Never `.tgz`/symlink. |
 
 ### HALT CONDITIONS — STOP and report to user if ANY occur

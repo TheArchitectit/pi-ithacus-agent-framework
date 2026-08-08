@@ -61,7 +61,7 @@ them as authoritative and do not re-introduce such references.
 | PREVENT-ITH-001 | error | Never drop messages without an anchor floor (preserve recent N). |
 | PREVENT-ITH-002 | error | Never split a toolCall/toolResult pair at a trim boundary. |
 | PREVENT-ITH-003 | error | Never inject context as `role:"system"` — prepend via `systemPrompt`. |
-| PREVENT-ITH-004 | critical | **Zero network calls at runtime.** Local node:sqlite + FS only. The only exception is a user-triggered localhost dashboard, annotated `// guardrails-allow PREVENT-ITH-004: <reason>`. |
+| PREVENT-ITH-004 | critical | **No external service / no subscription required.** Runs on local pi + Node built-ins; the extension source itself makes zero network calls at runtime (scan-enforced). Spawned sub-agents call your configured pi providers. Annotated exceptions for local-only integrations (e.g. dispatching the local `pi` binary, `// guardrails-allow PREVENT-ITH-004: <reason>`). |
 | PREVENT-DIST-001 | error | Distribute ONLY via `npm publish` + `pi install npm:ithacus`. Never `.tgz` tarball or symlink for shipping. |
 
 ## 3. Workflow

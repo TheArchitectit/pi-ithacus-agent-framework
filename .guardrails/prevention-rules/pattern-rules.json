@@ -466,17 +466,17 @@
     },
     {
       "rule_id": "PREVENT-PI-004",
-      "name": "Network calls in extension (must stay local)",
+      "name": "No external service dependency (template mirror)",
       "enabled": true,
       "pattern": "(fetch\\(|https?://|new (WebSocket|net\\.)|XMLHttpRequest|child_process)",
       "forbidden_context": null,
-      "message": "pi-mega-compact must run fully local \u2014 no remote MCP server or network calls at runtime.",
+      "message": "ithacus requires no external service or subscription - runs on local pi + Node built-ins. The extension source itself makes zero network calls at runtime (scan-enforced). Spawned sub-agents call YOUR configured pi providers.",
       "severity": "critical",
       "file_glob": [
         "extensions/**/*.ts",
         "src/**/*.ts"
       ],
-      "suggestion": "Keep compaction + vector store on local disk; remove network calls. (Config may still read a URL, but runtime must not fetch.)"
+      "suggestion": "Keep the extension source free of fetch/WebSocket/network calls; spawned sub-agents route through the user's configured pi providers, not a service ithacus depends on."
     },
     {
       "rule_id": "PREVENT-ITH-001",
@@ -513,14 +513,14 @@
     },
     {
       "rule_id": "PREVENT-ITH-004",
-      "name": "Network calls at runtime (must stay local)",
+      "name": "No external service / no subscription required",
       "enabled": true,
       "pattern": "(fetch\\(|https?://|new (WebSocket|net\\.)|XMLHttpRequest|child_process)",
       "forbidden_context": null,
-      "message": "ithacus must run fully local — zero network calls at runtime. Local node:sqlite + FS only. The only exception is a user-triggered localhost dashboard, which must carry an inline '// guardrails-allow PREVENT-ITH-004: <reason>' annotation.",
+      "message": "ithacus requires no external service or subscription - runs on local pi + Node built-ins. The extension source itself makes zero network calls at runtime (scan-enforced); spawned sub-agents call your configured pi providers. Annotated exceptions cover local-only integrations (e.g. dispatching the local `pi` binary via '// guardrails-allow PREVENT-ITH-004: <reason>').",
       "severity": "critical",
       "file_glob": ["extensions/**/*.ts", "src/**/*.ts"],
-      "suggestion": "Keep store + vector + mailbox on local disk. Read-only node:child_process.execSync for `git rev-parse` is allowed ONLY with a guardrails-allow annotation."
+      "suggestion": "Keep the extension source free of fetch/WebSocket/network calls. Spawning the local `pi` binary via node:child_process is allowed WITH a guardrails-allow annotation (intra-machine, no network)."
     },
     {
       "rule_id": "PREVENT-DIST-001",

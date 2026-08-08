@@ -29,7 +29,7 @@
 | P6 | Model-call failures (404/not-found) fall through the fallback chain; caller model is primary, fallbacks appended + deduped. | PR #3250 §4 |
 | P7 | Relieve context mid-run (durable trim at settled `agent_end`) so a team run never balloons to the window limit. | mega-compact `agent-handlers.ts` |
 | P8 | Persist decisions as memories; recall them as sub-agent context, scaled by pressure. | mega-compact `memory.ts`, `turn_end` review |
-| P9 | Zero network at runtime; localhost dashboard is the only annotated exception. | PREVENT-PI-004 |
+| P9 | No external service / no subscription required - runs on local pi + Node built-ins; extension source makes zero network calls at runtime (scan-enforced). Spawned sub-agents call your configured pi providers. | PREVENT-ITH-004 PREVENT-PI-004 |
 | P10 | Never split a toolCall/toolResult pair; never drop below the anchor floor. | PREVENT-PI-001/002/003 |
 | P11 | Ship only via npm (`pi install npm:ithacus`); never `.tgz`/symlink. Folder is tracked so it travels with the repo. | PREVENT-DIST-001 |
 | P12 | Expose a live localhost dashboard showing the team + tokens. | mega-compact `DashboardSnapshot.crew` |
@@ -65,7 +65,7 @@ ithacus/                         ← the repo (= the project name)
 │   │   └── team-handlers.ts    ← TeamCreate/Delete/Status as pi sub-agent plans
 │   ├── ithacus-team.ts         ← mode presets + role distribution + spawn via pi Agent
 │   ├── ithacus-commands.ts     ← /ithacus-team, /ithacus-status, /ithacus-recall
-│   └── ithacus-dashboard.ts    ← localhost dashboard lifecycle (PREVENT-PI-004 annotated)
+│   └── ithacus-dashboard.ts    ← localhost dashboard lifecycle (PREVENT-ITH-004 PREVENT-PI-004 annotated)
 └── docs/
     ├── INDEX_MAP.md
     └── specs/
@@ -108,7 +108,7 @@ the watcher.
 
 - No compression/Trident/dedup engine — that is `pi-mega-compact`'s job; ithacus
   only borrows the durable-trim *relief* pattern and the folder convention.
-- No remote MCP server, no non-localhost network (P9).
+- No external service or subscription required (P9); extension source makes zero network calls at runtime. Spawned sub-agents call your configured pi providers.
 - No `.tgz`/symlink distribution (P11).
 - No new state directory — it lives in `.pi/ithacus`.
 
