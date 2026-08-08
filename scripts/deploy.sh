@@ -15,7 +15,7 @@
 #      (TODO: regression_check.py --soft-as-hard feature for promoting
 #      soft-limit violations on changed files to blocking — not yet
 #      implemented; see gate step for details.)
-#   3. Bump package.json + package-lock.json version.
+#   3. Bump package.json version (lock file optional — ithacus is zero-deps).
 #   4. Commit the version bump.
 #   5. Tag (annotated) + push BEFORE publish — a push failure aborts before
 #      the irreversible npm publish.
@@ -100,11 +100,15 @@ else
 fi
 
 # --- 4. commit version bump --------------------------------------------------
-if git diff --quiet -- package.json package-lock.json; then
+# ithacus is zero-runtime-deps (node built-ins only), so package-lock.json
+# may not exist. Check package.json for change (the only file a version bump
+# touches); only add the lock file if present.
+if git diff --quiet -- package.json; then
 	echo "[deploy] nothing to commit (version already set)."
 else
 	echo "[deploy] committing version bump"
-	git add package.json package-lock.json
+	git add package.json
+	[[ -f package-lock.json ]] && git add package-lock.json
 	git commit -m "chore(release): v$NEW_VERSION
 
 Release v$NEW_VERSION published via scripts/deploy.sh.
