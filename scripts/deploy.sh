@@ -10,9 +10,11 @@
 #
 # Enforces (in order):
 #   1. Clean git tree (no uncommitted changes).
-#   2. Full gate: build + lint + smoke + regression (incl. npm audit) +
-#      guardrails + semantic + schema-health. (--soft-as-hard over the prior
-#      release tag promotes any file a src/ commit grew past soft to blocking.)
+#   2. Full gate: build + lint + smoke + regression (failure registry +
+#      pattern violations) + guardrails + semantic + schema-health.
+#      (TODO: regression_check.py --soft-as-hard feature for promoting
+#      soft-limit violations on changed files to blocking — not yet
+#      implemented; see gate step for details.)
 #   3. Bump package.json + package-lock.json version.
 #   4. Commit the version bump.
 #   5. Tag (annotated) + push BEFORE publish — a push failure aborts before
@@ -68,25 +70,21 @@ echo "[deploy] git tree clean."
 
 # --- 2. full gate -------------------------------------------------------------
 # build (tsc) + lint (tsc --noEmit) + smoke (node --experimental-strip-types)
-# + regression (file-sizes + npm audit + settings coverage + failure registry)
+# + regression (failure registry + pattern violations)
 # + guardrails (PREVENT-* pattern scan) + semantic (AST unhandled-rejection)
 # + schema-health (ith_* table contract).
 #
-# --soft-as-hard --pre-commit promotes soft-limit violations on files CHANGED
-# since the prior release tag to blocking: this release's commits cannot grow
-# a src/ file past 300 (ext past 400) toward the 500 hard limit — it must be
-# split (delegate-shell + impl) instead of squeezed toward the ceiling.
+# NOTE: deploy.sh previously passed --soft-as-hard [--soft-as-hard-base TAG]
+# to promote soft-limit violations on changed files to blocking. That feature
+# was never implemented in regression_check.py (it rejects unknown args), so
+# the deploy gate aborted before publish. Removed until the file-size
+# soft/hard-limit promotion feature is implemented in a future sprint. For
+# 0.1.0 (first release, no prior tag) this is a no-op anyway.
 echo "[deploy] running gate: build + lint + smoke + regression + guardrails + semantic + schema-health"
 npm run build
 npm run lint
 npm test
-PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
-if [[ -n "$PREV_TAG" ]]; then
-	python3 scripts/regression_check.py --all --soft-as-hard --soft-as-hard-base "$PREV_TAG" --pre-commit
-else
-	# First release (no prior tag): headroom gate over the working-tree diff.
-	python3 scripts/regression_check.py --all --soft-as-hard --pre-commit
-fi
+python3 scripts/regression_check.py --all --pre-commit
 node scripts/guardrails-scan.mjs
 node scripts/semantic-scan.mjs
 node scripts/schema-health-check.mjs
