@@ -1,0 +1,52 @@
+# ci.yml — ithacus continuous integration gate.
+# Runs the full local gate on every push/PR to master.
+# Mirrors the four DevGate gate steps: build, lint, guardrails, regression,
+# semantic, and the smoke test suite.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13"
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Lint (tsc --noEmit)
+        run: npm run lint
+
+      - name: Guardrails scan
+        run: npm run guardrails
+
+      - name: Semantic scan
+        run: npm run semantic
+
+      - name: Regression check
+        run: npm run regression
+
+      - name: Smoke tests
+        run: npm test

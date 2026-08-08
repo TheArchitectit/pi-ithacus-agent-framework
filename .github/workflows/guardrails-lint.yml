@@ -1,0 +1,63 @@
+# guardrails-lint.yml — scope, distribution, and commit-message lint for PRs.
+# Enforces ithacus's hard constraints (CLAUDE.md §2, docs/AGENT_GUARDRAILS.md):
+#   - PREVENT-DIST-001: no .tgz tarballs committed (npm publish is the ONLY path).
+#   - PREVENT-ITH-004: no network runtime code added without guardrails-allow.
+#   - Scope: the .pi/ithacus/ runtime folder is not source — don't edit from PRs.
+#   - Commit hygiene: Conventional Commits subject + AI attribution
+#     (Co-Authored-By:) on at least one commit in the PR.
+name: Guardrails Lint
+
+on:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No .tgz tarballs (PREVENT-DIST-001)
+        run: |
+          if git ls-files --others --cached -- '*.tgz' | grep -q .; then
+            echo "::error::Tarball committed — npm publish is the ONLY distribution path (PREVENT-DIST-001)"
+            git ls-files --others --cached -- '*.tgz'
+            exit 1
+          fi
+
+      - name: No edits to .pi/ithacus runtime state (scope lock)
+        run: |
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD || true)
+          if echo "$changed" | grep -qE '^\.pi/ithacus/'; then
+            echo "::error::.pi/ithacus/ is runtime state, not source — it must not be edited from a PR."
+            echo "$changed" | grep -E '^\.pi/ithacus/'
+            exit 1
+          fi
+
+      - name: Commit-message hygiene (Conventional Commits)
+        run: |
+          base="origin/${{ github.base_ref }}"
+          mapfile -t commits < <(git rev-list "$base...HEAD")
+          fail=0
+          for sha in "${commits[@]}"; do
+            subj=$(git log -1 --format='%s' "$sha")
+            if ! echo "$subj" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+'; then
+              echo "::error::Commit $sha subject not Conventional Commits: $subj"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+
+      - name: AI attribution on at least one PR commit
+        run: |
+          base="origin/${{ github.base_ref }}"
+          bodies=$(git log "$base...HEAD" --format='%B')
+          if ! echo "$bodies" | grep -qiE 'Co-Authored-By:.*Claude|Co-Authored-By:.*AI'; then
+            echo "::warning::No AI Co-Authored-By trailer found on any commit in this PR (see docs/workflows/COMMIT_WORKFLOW.md)."
+          fi

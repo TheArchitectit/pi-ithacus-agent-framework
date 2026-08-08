@@ -1,0 +1,66 @@
+# regression-guard.yml — PR-only regression gate with headroom enforcement.
+# Runs the soft-as-hard headroom gate against the PR base, so a src/ file grown
+# past 300 lines (or extensions/ past 400) by THIS PR is blocked and must be
+# split (delegate-shell + impl) rather than squeezed toward the 500 hard limit.
+# Also cross-references the failure registry for active bugs on touched files.
+name: Regression Guard
+
+on:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history for the base-ref diff
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Soft-as-hard headroom + failure-registry cross-ref
+        id: reg
+        run: |
+          python3 scripts/regression_check.py --all --pre-commit --soft-as-hard \
+            --soft-as-hard-base origin/${{ github.base_ref }}
+          echo "result=pass" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Comment on PR on failure
+        if: steps.reg.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              "### 🛡️ Regression Guard failed",
+              "",
+              "The soft-as-hard headroom gate or failure-registry cross-ref blocked this PR.",
+              "",
+              "Run locally to see the details:",
+              "```",
+              "python3 scripts/regression_check.py --all --pre-commit --soft-as-hard \\",
+              "  --soft-as-hard-base origin/${{ github.base_ref }}",
+              "```",
+              "",
+              "- **Soft-as-hard**: a `src/` file grown past 300 lines or `extensions/` past 400 by this PR must be split, not squeezed toward 500.",
+              "- **Failure registry**: a file touched by this PR matches an active (status:`active`) entry in `.guardrails/failure-registry.jsonl`.",
+            ].join("\n");
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+            core.setFailed("Regression guard failed — see comment above.");
+
+      - name: Fail job if regression failed
+        if: steps.reg.outcome == 'failure'
+        run: exit 1

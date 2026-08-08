@@ -1,0 +1,69 @@
+# documentation-check.yml — keep docs healthy on PRs.
+# - Caps doc files at the 500-line ithacus limit (matches regression_check.py
+#   EXT_HARD / SRC_HARD ceilings; a doc over 500 should be split).
+# - Flags trailing whitespace.
+# - Flags broken intra-repo markdown links ([text](relative.md)).
+name: Documentation Check
+
+on:
+  pull_request:
+    branches: [master, main]
+    paths:
+      - "**.md"
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Doc line limit (500 lines)
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            n=$(wc -l < "$f")
+            if [ "$n" -gt 500 ]; then
+              echo "::error::$f is $n lines (>500) — split it."
+              fail=1
+            fi
+          done < <(git ls-files '*.md')
+          [ "$fail" -eq 0 ] || exit 1
+
+      - name: No trailing whitespace
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            if grep -nE '[[:space:]]+$' "$f" > /tmp/tw.txt; then
+              echo "::error::$f has trailing whitespace:"
+              cat /tmp/tw.txt
+              fail=1
+            fi
+          done < <(git ls-files '*.md')
+          [ "$fail" -eq 0 ] || exit 1
+
+      - name: Broken intra-repo markdown links
+        run: |
+          fail=0
+          : > /tmp/broken.txt
+          while IFS= read -r f; do
+            dir=$(dirname "$f")
+            # extract local .md links: ](target.md) or ](target.md#anchor).
+            grep -oE '\]\([^)]+\.md[^)]*\)' "$f" \
+              | sed -E 's/^\]\(//; s/\)$//' \
+              | while IFS='#' read -r target rest; do
+                  [ -z "$target" ] && continue
+                  resolved="$dir/$target"
+                  if [ ! -f "$resolved" ]; then
+                    echo "$f -> $target (resolved: $resolved)" >> /tmp/broken.txt
+                  fi
+                done
+          done < <(git ls-files '*.md')
+          if [ -s /tmp/broken.txt ]; then
+            echo "::error::Broken intra-repo markdown links:"
+            cat /tmp/broken.txt
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] || exit 1
