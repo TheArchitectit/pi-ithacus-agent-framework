@@ -18,7 +18,8 @@
     "test": "node --experimental-strip-types scripts/smoke-src.mjs",
     "lint": "tsc --noEmit -p tsconfig.json",
     "guardrails": "node scripts/guardrails-scan.mjs",
-    "regression": "python3 scripts/regression_check.py --all"
+    "regression": "python3 scripts/regression_check.py --all",
+    "semantic": "node scripts/semantic-scan.mjs"
   },
   "dependencies": {},
   "devDependencies": {

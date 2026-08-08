@@ -34,3 +34,7 @@ logs/
 
 # Scratch / audit probe scripts
 tmp/
+
+# DevGate framework reference clone (vendored-net-new tools live in scripts/;
+# this clone is reference-only and not part of the ithacus npm package).
+DevGate-Agentic-Framework/
