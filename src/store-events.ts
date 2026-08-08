@@ -44,7 +44,7 @@ export class EventsStore {
   query(opts: { runId?: string; agentId?: string; action?: string; limit?: number }): ActivityEvent[] {
     const limit = opts.limit ?? 100;
     const where: string[] = [];
-    const args: unknown[] = [];
+    const args: (string | number)[] = [];
     if (opts.runId) { where.push('runId = ?'); args.push(opts.runId); }
     if (opts.agentId) { where.push('agentId = ?'); args.push(opts.agentId); }
     if (opts.action) { where.push('action = ?'); args.push(opts.action); }
@@ -58,7 +58,7 @@ export class EventsStore {
   /** Count events matching a filter. */
   count(opts: { runId?: string; action?: string }): number {
     const where: string[] = [];
-    const args: unknown[] = [];
+    const args: (string | number)[] = [];
     if (opts.runId) { where.push('runId = ?'); args.push(opts.runId); }
     if (opts.action) { where.push('action = ?'); args.push(opts.action); }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';

@@ -69,7 +69,7 @@ export class PresenceStore {
     return this.db.prepare(`SELECT * FROM ith_presence WHERE agentId = ?`).get(agentId) as AgentPresence | undefined;
   }
   presencesForRun(runId: string): AgentPresence[] {
-    return this.db.prepare(`SELECT * FROM ith_presence WHERE runId = ?`).all(runId) as AgentPresence[];
+    return this.db.prepare(`SELECT * FROM ith_presence WHERE runId = ?`).all(runId) as unknown as AgentPresence[];
   }
   setPresenceStatus(agentId: string, status: PresenceStatus): void {
     this.db.prepare(`UPDATE ith_presence SET status = ? WHERE agentId = ?`).run(status, agentId);
@@ -82,12 +82,12 @@ export class PresenceStore {
   detectStuck(now: number): AgentPresence[] {
     return this.db.prepare(
       `SELECT * FROM ith_presence WHERE status = 'active' AND (? - lastHeartbeat) > stuckThresholdMs`,
-    ).all(now) as AgentPresence[];
+    ).all(now) as unknown as AgentPresence[];
   }
   markStuck(now: number): number {
-    return this.db.prepare(
+    return Number(this.db.prepare(
       `UPDATE ith_presence SET status = 'stuck' WHERE status = 'active' AND (? - lastHeartbeat) > stuckThresholdMs`,
-    ).run(now).changes;
+    ).run(now).changes);
   }
 
   // ---- reservations ----
@@ -114,7 +114,7 @@ export class PresenceStore {
     }
   }
   reservationsForRun(runId: string): FileReservation[] {
-    return this.db.prepare(`SELECT * FROM ith_reservations WHERE runId = ?`).all(runId) as FileReservation[];
+    return this.db.prepare(`SELECT * FROM ith_reservations WHERE runId = ?`).all(runId) as unknown as FileReservation[];
   }
   isReserved(filePath: string): FileReservation | undefined {
     return this.db.prepare(
@@ -130,7 +130,7 @@ export class PresenceStore {
     ).run(c.id, c.agentId, c.runId, c.inputTokens, c.outputTokens, c.model, c.ts);
   }
   costsForRun(runId: string): CostEntry[] {
-    return this.db.prepare(`SELECT * FROM ith_costs WHERE runId = ?`).all(runId) as CostEntry[];
+    return this.db.prepare(`SELECT * FROM ith_costs WHERE runId = ?`).all(runId) as unknown as CostEntry[];
   }
   /** Release all reservations for a run (cleanup on run completion). */
   releaseForRun(runId: string): void {

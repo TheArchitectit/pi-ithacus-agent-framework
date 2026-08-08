@@ -56,7 +56,7 @@ export function buildVerdict(findings: ReviewFinding[]): ReviewVerdict {
     };
   }
   const top = findings.reduce((worst, f) =>
-    priorityRank(f.priority) < priorityRank(worst) ? f : worst,
+    priorityRank(f.priority) < priorityRank(worst.priority) ? f : worst,
   );
   // Confidence: average of finding confidences, scaled down with more findings.
   const avgConf = Math.round(findings.reduce((s, f) => s + f.confidence, 0) / findings.length);
