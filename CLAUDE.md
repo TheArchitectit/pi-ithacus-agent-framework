@@ -1,6 +1,21 @@
 # Project Guidelines — ithacus
 
-## 0. Guardrails routing (READ FIRST)
+## 0. Project identity & glossary (READ FIRST — NON-NEGOTIABLE)
+
+Keep these four entities straight. Do NOT conflate them. Ever.
+
+| Entity | What it IS | Role in this repo |
+|--------|------------|-------------------|
+| **ithacus** | **The PROJECT.** A standalone agent framework that runs with pi.dev, letting you set different agents with different models to do task work. This is what we are BUILDING. | Everything in `src/`, `extensions/`, `docs/` |
+| **DevGate** | The development FRAMEWORK / dev tooling. Test runner, regression scanner, guardrails scanner, semantic scanner, schema-health, deploy pipeline, CI workflows. NOT a thing being built here — adapted copies live in `ithacus/scripts/` + `.github/workflows/`. Source clone is gitignored at `DevGate-Agentic-Framework/`. | `scripts/` (vendored adapted copies), `.github/workflows/` |
+| **.guardrails/** | The RULES we follow. `pattern-rules.json` (PREVENT-ITH-* / PREVENT-DIST-*) + `semantic-rules.json` (SEMANTIC-*) + `failure-registry.jsonl` (bug db). DevGate scripts ENFORCE these; guardrails = the policy. | `.guardrails/` |
+| **pi-mega-compact** | A SEPARATE, UNRELATED project (a compression extension). ithacus is NOT pi-mega-compact and is NOT a derivative of it. All references to it must be REMOVED from this repo. Do not re-introduce them. | OUT of scope. Scrub on sight. |
+
+**The mission, stated plainly:**
+> ithacus is an agent framework to run with pi.dev so we can set different
+> agents with different models to do task work.
+
+## 0.5. Guardrails routing
 
 * **docs/AGENT_GUARDRAILS.md** — MANDATORY safety protocols. Read before ANY
   code change. The Four Laws (Read First / Stay in Scope / Verify Before Commit
@@ -10,23 +25,22 @@
 * **.guardrails/prevention-rules/pattern-rules.json** — the `PREVENT-*` rules
   enforced by `scripts/guardrails-scan.mjs`.
 * **.claude/hooks/** — pre/post-execution + pre-commit gates (AI attribution,
-  secret scan). Non-fatal to dev, mandatory in CI.
+  secret scan, full gate). Non-fatal to dev, mandatory in CI.
 
 **Four Laws:** Read Before Editing · Stay in Scope · Verify Before Committing ·
 Halt When Uncertain.
 
 ## 1. What this is
 
-`ithacus` is a **greenfield pi coding-agent extension** (TypeScript, Node >= 22.13,
-ESM). It orchestrates coordinated sub-agent teams and lives directly in the
-repo's `<repo>/.pi/ithacus/` folder — **the folder name is the project name**.
+`ithacus` is a **standalone agent framework** (TypeScript, Node >= 22.13,
+ESM) that runs with pi.dev. Its purpose: let you set different agents with
+different models to do task work. It lives directly in the repo's
+`<repo>/.pi/ithacus/` folder — **the folder name is the project name**.
 
-It borrows *patterns* (not code) from two references:
-- **claw-code PR #3250** — team orchestration, `subagentModel` resolution,
-  parallel read-only tool execution, model-resolution fallthrough.
-- **pi-mega-compact** — the `.pi/<name>` folder convention, a single local
-  `node:sqlite` store, zero-network-at-runtime, and the durable-trim "relieve
-  context mid-run" lesson.
+ithacus is its own framework. It is NOT a derivative of pi-mega-compact or
+any other extension. Historical repo comments mentioning pi-mega-compact as a
+"pattern source" are STALE and are being scrubbed (task #25) — do not treat
+them as authoritative and do not re-introduce such references.
 
 ## 1. Architecture at a glance
 
