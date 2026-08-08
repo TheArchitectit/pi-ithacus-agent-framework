@@ -91,7 +91,7 @@ Legend: ✅ Full | 🟡 Partial | ⬜ Missing | 🔒 N/A (different paradigm)
 | Plan-level HITL | ⬜ | ✅ `requirePlanApproval` gates at plan→execute boundary | ⬜ |
 | Scheduled runs | ⬜ | ✅ Cron, interval, one-shot with auto-cancel | ⬜ |
 | Goal loops (autonomous judge) | ⬜ | ✅ LLM judge evaluates transcript against goal, multi-turn | ⬜ |
-| Zero network at runtime | ✅ SQLite + FS only | ⬜ | ✅ File-based coordination only |
+| No external service / subscription | ✅ local pi + Node built-ins only | ⬜ (OTLP exporters) | ✅ File-based coordination only |
 | PREVENT-* guardrails | ✅ 6 rules (ITH-001→004, DIST-001) | ⬜ | ⬜ |
 | Pi-agnostic src/ separation | ✅ No pi imports in src/ | ⬜ | ⬜ |
 | Hardened secrets detection | ⬜ | ✅ Linear-time PEM/Bearer/key=value detection | ⬜ |
@@ -207,9 +207,9 @@ Effort estimates: S (1-2 days), M (3-5 days), L (1-2 weeks), XL (2-4 weeks)
 
 ## 4. What Ithacus Does Better
 
-### 4.1 Zero-Network Runtime (PREVENT-ITH-004)
+### 4.1 No External Service / No Subscription (PREVENT-ITH-004)
 
-Ithacus is the **only** project that enforces zero network calls at runtime as a hard architectural constraint. All state lives in `node:sqlite` and the filesystem. This eliminates entire classes of failures: DNS, auth token expiry, API rate limits, proxy misconfiguration. The guardrail is scan-enforced (`scripts/guardrails-scan.mjs`). Neither pi-crew nor pi-messenger makes this commitment — pi-crew has OTLP exporters and potential external calls; pi-messenger is file-based but doesn't enforce it as a rule.
+Ithacus requires no external service or subscription to run — bring your own model via pi. The extension source itself makes zero network calls at runtime (scan-enforced by `scripts/guardrails-scan.mjs`); all ithacus state lives in local `node:sqlite` + the filesystem. Spawned sub-agents make LLM calls through YOUR configured pi providers, not a service ithacus depends on, so ithacus adds no external dependency beyond the model API you already use. pi-crew, by contrast, has OTLP exporters and potential external calls; pi-messenger is file-based like ithacus but doesn't enforce no-external-service as a scan rule.
 
 ### 4.2 PREVENT-* Guardrail System
 
@@ -218,7 +218,7 @@ Six scan-enforced rules with severity levels (error/critical) that catch archite
 - **PREVENT-ITH-001**: Never drop messages without an anchor floor
 - **PREVENT-ITH-002**: Never split toolCall/toolResult pairs at trim boundaries
 - **PREVENT-ITH-003**: Never inject context as `role:"system"` — use `systemPrompt`
-- **PREVENT-ITH-004**: Zero network at runtime
+- **PREVENT-ITH-004**: No external service / no subscription required (extension source makes zero network calls at runtime)
 - **PREVENT-DIST-001**: Distribute only via npm publish + pi install
 
 Neither competitor has this level of automated architectural enforcement.

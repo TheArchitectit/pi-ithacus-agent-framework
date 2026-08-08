@@ -106,10 +106,10 @@ Advisors are referenced in the PREVENT-* rules:
 ```json
 {
   "rule_id": "PREVENT-ITH-004",
-  "name": "Zero network calls at runtime",
+  "name": "No external service / no subscription required",
   "severity": "critical",
   "advisor": "advisor-cost",
-  "message": "Runtime network calls violate zero-network constraint"
+  "message": "Extension source must make no network calls at runtime (scan-enforced); no external service dependency, no subscription required"
 }
 ```
 

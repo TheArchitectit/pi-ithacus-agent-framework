@@ -104,7 +104,7 @@ and advisor/code-review/atomic-commit intelligence.
   500: `scripts/smoke-src.mjs` at 866 — the test harness — and
   `docs/DESIGN_MODEL_PROFILES.md` at 733 — a design doc.)
 - Guardrails scan: clean. Regression check: no regressions.
-- Zero network calls at runtime (PREVENT-ITH-004).
+- No external service / no subscription required; extension source makes zero network calls at runtime (PREVENT-ITH-004).
 
 ---
 

@@ -221,12 +221,15 @@ verification, worker). Match the `pi-subagents` frontmatter schema exactly.
 
 ### 4.4 PREVENT-ITH-004 annotation
 
-`node:child_process` `spawn("pi", ...)` is a subprocess spawn — it does NOT
-violate PREVENT-ITH-004 (zero network), since `pi` is a local binary and the
-spawn is intra-machine. No `guardrails-allow` annotation needed (the rule
-targets `node:http`/`node:https`/`node:net`/`fetch`/`WebSocket`, not
-`node:child_process`). Confirm by re-reading the rule's pattern in
-`.guardrails/prevention-rules/pattern-rules.json` before merging.
+`node:child_process` `spawn("pi", ...)` is a subprocess spawn — the rule's
+pattern includes the `child_process` token, so the import line carries an
+annotated exception: `// guardrails-allow PREVENT-ITH-004 PREVENT-PI-004:
+local-pi-subprocess-dispatch`. This is NOT a network call — `pi` is a local
+binary and the spawn is intra-machine. The annotation documents the audited
+exception (covering both rule sets that share the pattern), matching the
+search.ts convention. ithacus requires no external service or subscription;
+the extension source makes zero network calls at runtime (scan-enforced), and
+spawned sub-agents call your configured pi providers.
 
 ---
 

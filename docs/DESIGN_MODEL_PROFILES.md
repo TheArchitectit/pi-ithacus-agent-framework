@@ -493,7 +493,7 @@ export function formatCostEstimate(model: string, typicalInput = 2000, typicalOu
 
 | Approach | Pros | Cons |
 |---|---|---|
-| **Static (chosen)** | Zero network (PREVENT-ITH-004), deterministic, testable | Stale if pricing changes |
+| **Static (chosen)** | No fetch (extension source makes no network calls - PREVENT-ITH-004), deterministic, testable | Stale if pricing changes |
 | Dynamic (API fetch) | Always current | Violates PREVENT-ITH-004, requires auth, fragile |
 
 **Decision**: Static pricing. Update `MODEL_PRICING` manually when providers change
@@ -671,7 +671,7 @@ The design integrates cleanly because:
 3. **Schema idempotent**: `CREATE TABLE IF NOT EXISTS` — safe for existing stores
 4. **No network**: Static pricing, local SQLite, `pi.ask` is local UI
 5. **FK integrity**: Assignments reference profiles; SQLite enforces referential integrity
-6. **P2 compliance**: Seeding + CRUD are local operations; zero network at runtime
+6. **P2 compliance**: Seeding + CRUD are local operations; no network calls in this code path (PREVENT-ITH-004)
 
 The only risk is `pi.ask` availability in `ExtensionAPI`, mitigated by the `--profile` flag fallback.
 
@@ -719,7 +719,7 @@ The only risk is `pi.ask` availability in `ExtensionAPI`, mitigated by the `--pr
   "reasoning": [
     "Profile model takes highest precedence because user explicitly chose it at task time — more deliberate than session config",
     "Per-role is opt-in (default single profile) to minimize friction for casual users",
-    "Static pricing table chosen over dynamic API to maintain PREVENT-ITH-004 (zero network)",
+    "Static pricing table chosen over dynamic API to maintain PREVENT-ITH-004 (no fetch - extension source makes no network calls)",
     "All changes backward-compatible via optional parameters — no migration needed",
     "SQLite storage per design principle P2: one store, one source of truth",
     "FK enforcement prevents deletion of in-use profiles — data integrity guaranteed"

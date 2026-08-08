@@ -10,7 +10,7 @@
 
 **oh-my-pi** is a **complete rewrite of the Pi platform** — not an extension, not a plugin, but a fork of Pi itself. It ships a Rust core with TypeScript orchestration, delivering native-performance tools, embedded LSP/DAP, browser automation, multi-model collaboration, and a custom TUI. It is a monolithic platform replacement.
 
-**ithacus** is a **pi extension** — 14 files, ~1,216 lines of TypeScript that run inside the standard Pi runtime. It adds coordinated sub-agent teams, durable context trimming, a local SQLite store, and formal safety guardrails. It installs via `pi install npm:ithacus` and requires zero network calls at runtime.
+**ithacus** is a **pi extension** — 14 files, ~1,216 lines of TypeScript that run inside the standard Pi runtime. It adds coordinated sub-agent teams, durable context trimming, a local SQLite store, and formal safety guardrails. It installs via `pi install npm:ithacus` and requires no external service or subscription — the extension source makes zero network calls at runtime (scan-enforced); you bring your own model via pi.
 
 **These are not direct competitors.** oh-my-pi is the platform; ithacus is a plugin. However, oh-my-pi's feature set defines what "best-in-class" looks like for a coding agent, and informs what ithacus should build, integrate, or intentionally defer.
 
