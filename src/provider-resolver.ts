@@ -62,6 +62,7 @@ export type ProviderSource =
   | "agent-frontmatter"
   | "pi-setup-unique"
   | "pi-setup-default"
+  | "settings-default-fallback"
   | "unresolved";
 
 export interface ResolvedProvider {
