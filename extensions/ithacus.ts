@@ -14,6 +14,8 @@ import { IthRuntime } from "./ithacus-runtime.js";
 import { registerEventHandlers } from "./ithacus-events/register.js";
 import { registerTeamCommands } from "./ithacus-commands.js";
 import { registerDispatchTool } from "./ithacus-dispatch.js";
+import { registerSetupCommand } from "./ithacus-setup.js";
+import { maybeShowOnLoadNotice } from "./ithacus-onboarding.js";
 
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
@@ -23,5 +25,10 @@ export default function (pi: ExtensionAPI) {
   // Sprint 5.10: the `ithacus-dispatch` tool is the LLM-invoked entry point
   // for spawning coordinated sub-agents (real pi subprocess, isolated context,
   // per-agent model). Clears the phantom `pi.callTool` dispatch for good.
-  registerDispatchTool(pi);
+  // runtime wires the first-dispatch onboarding notice (one-shot, per-repo).
+  registerDispatchTool(pi, runtime);
+  // `/ithacus-setup`: bind models+providers to roles + scaffold new agents.
+  registerSetupCommand(pi);
+  // On-load notice: welcome if no providers are configured (mirrors pi-setup).
+  maybeShowOnLoadNotice();
 }

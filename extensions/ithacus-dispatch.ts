@@ -39,6 +39,10 @@ import {
   findAgent,
   type AgentConfig,
 } from "./ithacus-agents.js";
+import { loadPiSetupConfig } from "./ithacus-provider-config.js";
+import { resolveProviderForModel } from "../src/provider-resolver.js";
+import type { IthRuntime } from "./ithacus-runtime.js";
+import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -51,6 +55,14 @@ export interface SpawnAgentOpts {
   task: string;
   /** Per-agent model override (realizes "different models per child"). */
   model?: string;
+  /**
+   * Per-dispatch provider override. When set, the child pi subprocess is
+   * spawned with `--provider <name>`. When unset, the provider is resolved
+   * from (in order): the model id prefix (`plexus/foo`), the agent's
+   * frontmatter `provider:` field, or pi-setup's models.json. If none
+   * resolves, spawnAgent fast-fails with a hint pointing to `/setup`.
+   */
+  provider?: string;
   /** Working directory for the child pi process. Defaults to process.cwd(). */
   cwd?: string;
   /** Tool allowlist override; defaults to the agent's frontmatter `tools`. */
@@ -76,6 +88,10 @@ export interface SpawnAgentResult {
   stderr: string;
   /** Model the child actually ran with (after override resolution). */
   model?: string;
+  /** Provider the child actually ran with (after resolution; `--provider`). */
+  provider?: string;
+  /** Source of the resolved provider ("model-prefix" | "explicit-param" | ...). */
+  providerSource?: string;
   durationMs: number;
   error?: string;
 }
@@ -161,8 +177,44 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
 
   const model = opts.model ?? agent.model;
   const tools = opts.tools ?? agent.tools;
+
+  // Resolve the provider so the child pi subprocess runs against a configured
+  // provider instead of defaulting to (often unconfigured) anthropic on a bare
+  // model id. Reads pi-setup's models.json + settings.json (cached). When no
+  // provider resolves, fast-fail with a hint (do not spawn a doomed child).
+  // An agent with NO model frontmatter skips resolution entirely and spawns
+  // with pi's defaults (no --model/--provider) — that is a valid config.
+  let resolvedModel: string | undefined = model;
+  let resolvedProvider: string | undefined;
+  let resolvedSource: string | undefined;
+  if (model) {
+    const resolved = resolveProviderForModel({
+      model,
+      explicitProvider: opts.provider,
+      agentProvider: agent.provider,
+      piConfig: loadPiSetupConfig(),
+    });
+    if (resolved.source === "unresolved") {
+      return {
+        agent: opts.agent,
+        task: opts.task,
+        success: false,
+        output: "",
+        exitCode: 1,
+        stderr: `${resolved.error ?? "No provider resolved."}\n${resolved.hint ?? ""}`,
+        model,
+        durationMs: Date.now() - start,
+        error: "provider_unresolved",
+      };
+    }
+    resolvedModel = resolved.model;
+    resolvedProvider = resolved.provider;
+    resolvedSource = resolved.source;
+  }
+
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
-  if (model) args.push("--model", model);
+  if (resolvedModel) args.push("--model", resolvedModel);
+  if (resolvedProvider) args.push("--provider", resolvedProvider);
   if (tools && tools.length > 0) args.push("--tools", tools.join(","));
 
   let tmpDir: string | null = null;
@@ -258,7 +310,9 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
     output,
     exitCode,
     stderr,
-    model,
+    model: resolvedModel,
+    provider: resolvedProvider,
+    providerSource: resolvedSource,
     durationMs: Date.now() - start,
     error: wasAborted ? "aborted" : success ? undefined : "nonzero_exit_or_empty_output",
   };
@@ -272,6 +326,8 @@ interface DispatchDetails {
   agent: string;
   exitCode: number;
   model?: string;
+  provider?: string;
+  providerSource?: string;
   durationMs: number;
   success: boolean;
 }
@@ -285,7 +341,13 @@ const DispatchParams = Type.Object({
   ),
   task: Type.String({ description: "Task for the sub-agent." }),
   model: Type.Optional(
-    Type.String({ description: "Per-agent model override (different models per child)." }),
+    Type.String({ description: "Per-agent model override (different models per child). Accepts a bare id (`claude-haiku-4-5`) or a provider-prefixed id (`plexus/claude-mythos-5`)." }),
+  ),
+  provider: Type.Optional(
+    Type.String({
+      description:
+        "Per-dispatch provider override (e.g. 'plexus'). When unset, the provider is resolved from the model id prefix, the agent's frontmatter `provider:`, or pi-setup's config. If none resolves, dispatch fast-fails with a hint to run /setup.",
+    }),
   ),
   cwd: Type.Optional(
     Type.String({ description: "Working directory for the child pi process." }),
@@ -298,7 +360,7 @@ const DispatchParams = Type.Object({
  * per-agent model). ithacus's existing team/swarm orchestration in src/ drives
  * the dispatch loop; this tool is the single LLM entry point.
  */
-export function registerDispatchTool(pi: ExtensionAPI): void {
+export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): void {
   const tool: ToolDefinition<typeof DispatchParams, DispatchDetails> = {
     name: "ithacus-dispatch",
     label: "ithacus dispatch",
@@ -308,15 +370,21 @@ export function registerDispatchTool(pi: ExtensionAPI): void {
     parameters: DispatchParams,
     async execute(
       _toolCallId: string,
-      params: { agent?: string; task: string; model?: string; cwd?: string },
+      params: { agent?: string; task: string; model?: string; provider?: string; cwd?: string },
       signal: AbortSignal | undefined,
       _onUpdate: ((partial: { content: Array<{ type: "text"; text: string }>; details: DispatchDetails }) => void) | undefined,
       _ctx: ExtensionContext,
     ) {
+      // First-dispatch onboarding notice (one-shot, per-repo). Persisted in the
+      // ith_kv store table via markOnboardingSeen(). Silent after the first
+      // dispatch in a repo. Only fires when a runtime is wired (entry passes
+      // it; the smoke harness calls registerDispatchTool without one).
+      if (runtime) maybeShowFirstDispatchNotice(runtime);
       const res = await spawnAgent({
         agent: params.agent ?? "explore",
         task: params.task,
         model: params.model,
+        provider: params.provider,
         cwd: params.cwd,
         signal: signal ?? undefined,
       });
@@ -328,6 +396,8 @@ export function registerDispatchTool(pi: ExtensionAPI): void {
           agent: res.agent,
           exitCode: res.exitCode,
           model: res.model,
+          provider: res.provider,
+          providerSource: res.providerSource,
           durationMs: res.durationMs,
           success: res.success,
         },

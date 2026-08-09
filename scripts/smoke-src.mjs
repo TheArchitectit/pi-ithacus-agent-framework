@@ -74,6 +74,7 @@ const { SwarmOrchestrator, createSwarmOrchestrator, initHive, teardownHive, acqu
 const { synthesize, majorityVote, weightedMerge, firstWins, detectConflicts } = await import(join(buildDir, 'synthesis.ts'))
 const { SwarmStore, createSwarmStore } = await import(join(buildDir, 'store-swarm.ts'))
 const { PlanSynthesizer, createPlanSynthesizer, PlanRunner, createPlanRunner } = await import(join(buildDir, 'plan.ts'))
+const resolver = await import(join(buildDir, 'provider-resolver.ts'))
 
 let failures = 0;
 function check(name, cond) {
@@ -3369,6 +3370,112 @@ check('synth.weighted conflict resolution mentions method', wConf.conflicts[0]?.
 
   planStore.close()
   rmSync(planTmp, { recursive: true, force: true })
+}
+
+// ============================================================================
+// provider-resolver — resolve which provider owns a model id (pure, no fs)
+// Chain: prefix > explicit param > agent frontmatter > pi-setup scan > unresolved.
+// ============================================================================
+{
+  const resolve = resolver.resolveProviderForModel;
+  let r;
+
+  // 1. provider-prefixed → split, no lookup needed
+  r = resolve({ model: "plexus/claude-mythos-5" });
+  check("resolver.prefix provider", r.provider === "plexus");
+  check("resolver.prefix model split", r.model === "claude-mythos-5");
+  check("resolver.prefix source", r.source === "model-prefix");
+
+  // 2. explicit param overrides scan (bare id + explicit provider)
+  r = resolve({ model: "claude-haiku-4-5", explicitProvider: "test" });
+  check("resolver.explicit provider", r.provider === "test");
+  check("resolver.explicit source", r.source === "explicit-param");
+
+  // 3. agent frontmatter provider
+  r = resolve({ model: "claude-haiku-4-5", agentProvider: "anthropic" });
+  check("resolver.agent provider", r.provider === "anthropic");
+  check("resolver.agent source", r.source === "agent-frontmatter");
+
+  // 4. pi-setup config — unique owner
+  const cfg = {
+    providers: {
+      plexus: { models: [{ id: "claude-mythos-5" }] },
+      openai: { models: [{ id: "gpt-4o" }] },
+    },
+    settings: { defaultProvider: "plexus" },
+  };
+  r = resolve({ model: "claude-mythos-5", piConfig: cfg });
+  check("resolver.unique provider", r.provider === "plexus");
+  check("resolver.unique source", r.source === "pi-setup-unique");
+
+  // 5. ambiguous → prefers settings.defaultProvider
+  const ambCfg = {
+    providers: {
+      plexus: { models: [{ id: "shared-model" }] },
+      openai: { models: [{ id: "shared-model" }] },
+    },
+    settings: { defaultProvider: "openai" },
+  };
+  r = resolve({ model: "shared-model", piConfig: ambCfg });
+  check("resolver.ambiguous picks default", r.provider === "openai");
+  check("resolver.ambiguous source default", r.source === "pi-setup-default");
+
+  // 6. ambiguous without default → unresolved
+  const ambNoDefault = {
+    providers: {
+      plexus: { models: [{ id: "shared-model" }] },
+      openai: { models: [{ id: "shared-model" }] },
+    },
+    settings: {},
+  };
+  r = resolve({ model: "shared-model", piConfig: ambNoDefault });
+  check("resolver.ambiguous no default unresolved", r.source === "unresolved");
+  check("resolver.ambiguous no default has error", typeof r.error === "string" && r.error.includes("ambiguous"));
+
+  // 7. zero owners + NO defaultProvider → unresolved with /setup hint. Use a
+  // config where defaultProvider is absent so the fallback path is not taken.
+  const cfgNoDefault = {
+    providers: {
+      plexus: { models: [{ id: "claude-mythos-5" }] },
+      openai: { models: [{ id: "gpt-4o" }] },
+    },
+    settings: {},
+  };
+  r = resolve({ model: "no-such-model", piConfig: cfgNoDefault });
+  check("resolver.zero unresolved", r.source === "unresolved");
+  check("resolver.zero has error", typeof r.error === "string");
+  check("resolver.zero hints setup", (r.hint ?? "").includes("/setup"));
+  check("resolver.zero mentions no default", (r.error ?? "").includes("no default provider"));
+
+  // 8. no config at all → unresolved + hint
+  r = resolve({ model: "claude-haiku-4-5" });
+  check("resolver.noconfig unresolved", r.source === "unresolved");
+  check("resolver.noconfig hints setup", (r.hint ?? "").includes("/setup"));
+
+  // 9. empty model → unresolved
+  r = resolve({ model: "" });
+  check("resolver.empty unresolved", r.source === "unresolved");
+
+  // 10. settings-default-fallback: bare id not in any provider, but
+  // settings.defaultProvider is set → "just works" path (the /setup default).
+  // Provider = defaultProvider; model stays the bare id (no defaultModel set).
+  r = resolve({ model: "claude-haiku-4-5", piConfig: cfg });
+  check("resolver.fallback provider default", r.provider === "plexus");
+  check("resolver.fallback model unchanged", r.model === "claude-haiku-4-5");
+  check("resolver.fallback source", r.source === "settings-default-fallback");
+
+  // 11. settings-default-fallback with defaultModel override: when settings
+  // also sets defaultModel, the agent's bare id is REPLACED by the session
+  // default model — so a bundled `claude-haiku-4-5` becomes the user's chosen
+  // default model under their default provider.
+  const cfgWithDefaultModel = {
+    providers: { plexus: { models: [{ id: "claude-mythos-5" }] } },
+    settings: { defaultProvider: "plexus", defaultModel: "claude-mythos-5" },
+  };
+  r = resolve({ model: "claude-haiku-4-5", piConfig: cfgWithDefaultModel });
+  check("resolver.fallback defaultModel provider", r.provider === "plexus");
+  check("resolver.fallback defaultModel replaced", r.model === "claude-mythos-5");
+  check("resolver.fallback defaultModel source", r.source === "settings-default-fallback");
 }
 
 rmSync(buildDir, { recursive: true, force: true });

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS ith_inbox (id TEXT PRIMARY KEY, agentId TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS ith_memories (id TEXT PRIMARY KEY, kind TEXT NOT NULL, text TEXT NOT NULL, repoId TEXT NOT NULL, ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS ith_worktrees (agentId TEXT PRIMARY KEY, runId TEXT NOT NULL, path TEXT NOT NULL, branch TEXT NOT NULL, cleaned INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS ith_async_runs (runId TEXT PRIMARY KEY, status TEXT NOT NULL, pid INTEGER, logPath TEXT NOT NULL, exitCode INTEGER, startedAt INTEGER NOT NULL, completedAt INTEGER, error TEXT);
+CREATE TABLE IF NOT EXISTS ith_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_ith_agents_run ON ith_agents(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_tasks_run ON ith_tasks(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_inbox_agent ON ith_inbox(agentId, read);
@@ -253,6 +254,31 @@ export class IthStore {
     if (opts?.error !== undefined) { parts.push(`error = ?`); args.push(opts.error); }
     args.push(runId);
     this.db.prepare(`UPDATE ith_async_runs SET ${parts.join(', ')} WHERE runId = ?`).run(...args);
+  }
+
+  // ---- key-value (onboarding flags, etc.) ----
+  getKv(key: string): string | null {
+    const row = this.db.prepare(`SELECT value FROM ith_kv WHERE key = ?`).get(key) as
+      | { value?: string }
+      | undefined;
+    return row?.value ?? null;
+  }
+  setKv(key: string, value: string): void {
+    this.db.prepare(`INSERT OR REPLACE INTO ith_kv (key, value) VALUES (?, ?)`).run(key, value);
+  }
+  /**
+   * Mark the first-use onboarding notice as seen for this repo. Returns TRUE
+   * if this call was the first (onboarding had NOT been seen before this
+   * call), FALSE if already seen. The caller shows the one-shot notice on true.
+   * Per-repo: ith_kv lives in <repo>/.pi/ithacus/sqlite.db.
+   */
+  markOnboardingSeen(): boolean {
+    if (this.getKv("onboarding_seen") === "1") return false;
+    this.setKv("onboarding_seen", "1");
+    return true;
+  }
+  isOnboardingSeen(): boolean {
+    return this.getKv("onboarding_seen") === "1";
   }
 
   close(): void {

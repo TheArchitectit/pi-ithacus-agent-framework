@@ -137,19 +137,42 @@ try {
   check("spawn.unknown error flag", unknownRes.error === "unknown_agent");
   check("spawn.unknown mentions available", unknownRes.stderr.includes("Available"));
 
+  // --- provider resolution fast-fail: bare model no provider configured →
+  // no subprocess spawned, error="provider_unresolved", hint points to /setup ---
+  let fastFailSpawnCalled = false;
+  const fastFailRes = await dispatchMod.spawnAgent({
+    agent: "explore",
+    task: "probe",
+    model: "definitely-no-such-model-xyz",
+    spawnImpl: () => { fastFailSpawnCalled = true; return makeFakeProc({ stdoutLines: [messageEndEvent("x")] }); },
+  });
+  check("spawn.fastfail success false", fastFailRes.success === false);
+  check("spawn.fastfail no subprocess", fastFailSpawnCalled === false);
+  check("spawn.fastfail error flag", fastFailRes.error === "provider_unresolved");
+  check("spawn.fastfail exitCode 1", fastFailRes.exitCode === 1);
+  check("spawn.fastfail hints /setup", fastFailRes.stderr.includes("/setup"));
+
   // --- known agent + mock: JSON capture + success:true ---
+  // provider: "test" pins the provider (explicit-param path) so spawn proceeds
+  // regardless of whatever pi-setup config exists in this env — this test
+  // exercises the subprocess wiring, not provider resolution.
   const mockRes = await dispatchMod.spawnAgent({
     agent: "explore",
     task: "scout the auth module",
     model: "claude-haiku-4-5",
+    provider: "test",
     spawnImpl: () => makeFakeProc({ stdoutLines: [messageEndEvent("found auth in src/auth.ts")] }),
   });
   check("spawn.mock success true", mockRes.success === true);
   check("spawn.mock output captured", mockRes.output === "found auth in src/auth.ts");
   check("spawn.mock model echoed", mockRes.model === "claude-haiku-4-5");
+  check("spawn.mock provider echoed", mockRes.provider === "test");
+  check("spawn.mock providerSource explicit", mockRes.providerSource === "explicit-param");
   check("spawn.mock success flag unset", mockRes.error === undefined);
 
   // --- mock verifies args built correctly (--model, --tools, --mode json) ---
+  // provider-prefixed model ("custom/gpt-4o") resolves via model-prefix:
+  // the resolver splits it → --model gpt-4o --provider custom.
   let recordedArgs = null;
   await dispatchMod.spawnAgent({
     agent: "reviewer",
@@ -161,7 +184,9 @@ try {
     },
   });
   check("spawn.args has --mode json", recordedArgs.includes("--mode") && recordedArgs.includes("json"));
-  check("spawn.args has --model", recordedArgs.includes("--model") && recordedArgs.includes("custom/gpt-4o"));
+  check("spawn.args has --model", recordedArgs.includes("--model") && recordedArgs.includes("gpt-4o"));
+  check("spawn.args has --provider", recordedArgs.includes("--provider") && recordedArgs.includes("custom"));
+  check("spawn.args model split (no slash)", !recordedArgs.includes("custom/gpt-4o"));
   check("spawn.args has --tools", recordedArgs.includes("--tools"));
   check("spawn.args reviewer tools", recordedArgs.includes("read,grep,find,ls,bash"));
   check("spawn.args has Task prefix", recordedArgs.some((a) => a.startsWith("Task: ")));
@@ -173,6 +198,7 @@ try {
   await dispatchMod.spawnAgent({
     agent: "explore",
     task: "t",
+    provider: "test",
     spawnImpl: (_c, a, _o) => { args2 = a; return makeFakeProc({ stdoutLines: [messageEndEvent("x")] }); },
   });
   check("spawn.args2 still has --model (agent default)", args2.includes("--model") && args2.includes("claude-haiku-4-5"));
@@ -181,6 +207,7 @@ try {
   const emptyRes = await dispatchMod.spawnAgent({
     agent: "explore",
     task: "nothing emitted",
+    provider: "test",
     spawnImpl: () => makeFakeProc({ stdoutLines: [], exitCode: 0 }),
   });
   check("spawn.empty success false", emptyRes.success === false);
@@ -190,6 +217,7 @@ try {
   const failRes = await dispatchMod.spawnAgent({
     agent: "explore",
     task: "dies",
+    provider: "test",
     spawnImpl: () => makeFakeProc({ stdoutLines: [messageEndEvent("partial")], exitCode: 2 }),
   });
   check("spawn.fail success false", failRes.success === false && failRes.exitCode === 2);
@@ -199,6 +227,7 @@ try {
   const abortRes = await dispatchMod.spawnAgent({
     agent: "explore",
     task: "cancelled",
+    provider: "test",
     signal: ac.signal,
     spawnImpl: () => {
       const proc = makeFakeProc({ stdoutLines: [], exitCode: 0, onClose: (p) => { p.killed = true; } });

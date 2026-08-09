@@ -15,6 +15,7 @@
  *   description: Fast read-only codebase recon ...
  *   tools: read, grep, find, ls, bash
  *   model: claude-haiku-4-5
+ *   provider: plexus            # optional; pins the provider for this agent
  *   ---
  *   <body = system prompt>
  *
@@ -36,6 +37,8 @@ export interface AgentConfig {
   tools?: string[];
   /** Per-agent default model (frontmatter `model:`). */
   model?: string;
+  /** Per-agent provider pin (frontmatter `provider:`). Optional; when set, the child pi subprocess is spawned with `--provider <name>`. */
+  provider?: string;
   /** Markdown body = the agent's system prompt. */
   systemPrompt: string;
   source: AgentSource;
@@ -114,6 +117,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
       description: frontmatter.description ?? "",
       tools: toolsRaw ? toolsRaw.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
       model: frontmatter.model || undefined,
+      provider: frontmatter.provider || undefined,
       systemPrompt: body,
       source,
       filePath,
