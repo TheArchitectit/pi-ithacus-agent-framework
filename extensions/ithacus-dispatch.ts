@@ -70,6 +70,13 @@ export interface SpawnAgentOpts {
   /** Cancellation signal. */
   signal?: AbortSignal;
   /**
+   * Live progress callback (task #25): fires on dispatch start, on each
+   * parsed child JSON event (tool calls, text deltas, message_end), so the
+   * parent UI can show what a dispatch is doing + which model as it runs.
+   * Best-effort; callers may ignore it.
+   */
+  onProgress?: (info: { phase: string; text: string; model?: string }) => void;
+  /**
    * Test seam: inject a fake subprocess spawn. Defaults to the real Node
    * process-spawn API. Smoke tests inject a stub that emits JSON
    * `message_end` lines, since real `pi` can't run in the harness (no model
@@ -223,6 +230,7 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
   let stderr = "";
   let exitCode = 0;
   let wasAborted = false;
+  let capturedModel: string | undefined;
 
   try {
     if (agent.systemPrompt.trim()) {
@@ -258,8 +266,29 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
           return;
         }
         if (!isPiJsonEvent(parsed)) return;
-        if (parsed.type === "message_end" && parsed.message) {
+        const t = parsed.type ?? "";
+        // Final assistant message — accumulate output + capture the model the
+        // child actually ran with (authoritative when resolution falls through).
+        if (t === "message_end" && parsed.message) {
           output += extractAssistantText(parsed.message);
+          if (parsed.message.model) capturedModel = parsed.message.model;
+          opts.onProgress?.({ phase: "message_end", text: "", model: capturedModel });
+          return;
+        }
+        // Streaming text delta (progressive, not accumulated into `output` —
+        // message_end is the final source). Surface for live visibility.
+        if (t === "message_delta") {
+          const delta = (parsed as { delta?: { content?: Array<{ type?: string; text?: string }> } }).delta;
+          const txt = delta?.content?.map((p) => p?.text ?? "").join("") ?? "";
+          if (txt) opts.onProgress?.({ phase: "text", text: txt });
+          return;
+        }
+        // Tool-use events — surface which tool the child is calling (the
+        // "what is it doing" signal the parent needs).
+        if (t.includes("tool")) {
+          const name = (parsed as { name?: string; tool_name?: string }).name ?? (parsed as { tool_name?: string }).tool_name ?? t;
+          opts.onProgress?.({ phase: "tool", text: String(name) });
+          return;
         }
       };
 
@@ -306,6 +335,8 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
   }
 
   const success = exitCode === 0 && output.length > 0 && !wasAborted;
+  // The child's reported model wins (authoritative) over the resolved guess.
+  const finalModel = capturedModel ?? resolvedModel;
   return {
     agent: opts.agent,
     task: opts.task,
@@ -313,7 +344,7 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
     output,
     exitCode,
     stderr,
-    model: resolvedModel,
+    model: finalModel,
     provider: resolvedProvider,
     providerSource: resolvedSource,
     durationMs: Date.now() - start,
@@ -375,7 +406,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       _toolCallId: string,
       params: { agent?: string; task: string; model?: string; provider?: string; cwd?: string },
       signal: AbortSignal | undefined,
-      _onUpdate: ((partial: { content: Array<{ type: "text"; text: string }>; details: DispatchDetails }) => void) | undefined,
+      onUpdate: ((partial: { content: Array<{ type: "text"; text: string }>; details: DispatchDetails }) => void) | undefined,
       _ctx: ExtensionContext,
     ) {
       // First-dispatch onboarding notice (one-shot, per-repo). Persisted in the
@@ -387,6 +418,17 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       runtime?.dispatchStarted(agentType);
       let res;
       try {
+        // Live visibility (task #25): surface dispatch start + each child event
+        // to the parent UI via onUpdate, so the user can SEE what the dispatch
+        // is doing + which model while it runs — not just the final output.
+        const header = `[ithacus-dispatch] agent=${agentType} task=${params.task.slice(0, 80)}${params.task.length > 80 ? "…" : ""}`;
+        const emit = (text: string, details: DispatchDetails): void => {
+          onUpdate?.({ content: [{ type: "text" as const, text }], details });
+        };
+        emit(`${header}\n(spawning sub-agent…)`, {
+          agent: agentType, exitCode: -1, durationMs: 0, success: false,
+          model: params.model, provider: params.provider,
+        });
         res = await spawnAgent({
           agent: agentType,
           task: params.task,
@@ -394,13 +436,29 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
           provider: params.provider,
           cwd: params.cwd,
           signal: signal ?? undefined,
+          onProgress: (info) => {
+            const detail = info.model ? ` [${info.model}]` : "";
+            const line = info.phase === "tool" ? `  → tool: ${info.text}`
+              : info.phase === "text" ? `  … ${info.text.slice(-200)}`
+              : info.phase === "message_end" ? `  ✓ done${detail}`
+              : `  · ${info.phase}`;
+            emit(`${header}${detail ? ` model=${info.model}` : ""}\n${line}`, {
+              agent: agentType, exitCode: -1, durationMs: 0, success: false,
+              model: info.model ?? params.model, provider: params.provider,
+            });
+          },
         });
       } finally {
         runtime?.dispatchEnded(agentType);
       }
+      // Final result: a visible status header (agent/model@provider/duration/
+      // exit) PREPENDED to the child's output — so the parent LLM and any tool
+      // result renderer see what actually ran, not just the prose.
+      const mp = res.model ? ` model=${res.model}${res.provider ? `@${res.provider}` : ""}` : "";
+      const status = `[ithacus-dispatch] agent=${res.agent}${mp} duration=${res.durationMs}ms exit=${res.exitCode} success=${res.success}`;
       return {
         content: [
-          { type: "text" as const, text: res.output || res.stderr || "(no output)" },
+          { type: "text" as const, text: `${status}\n\n${res.output || res.stderr || "(no output)"}` },
         ],
         details: {
           agent: res.agent,

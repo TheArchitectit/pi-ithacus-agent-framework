@@ -41,3 +41,6 @@ tmp/
 # DevGate framework reference clone (vendored-net-new tools live in scripts/;
 # this clone is reference-only and not part of the ithacus npm package).
 DevGate-Agentic-Framework/
+
+# Guardrails template reference clone (vendored rules live in .guardrails/)
+agent-guardrails-template/
