@@ -423,7 +423,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
         // Live visibility (task #25): surface dispatch start + each child event
         // to the parent UI via onUpdate, so the user can SEE what the dispatch
         // is doing + which model while it runs — not just the final output.
-        const header = `[ithacus-dispatch] agent=${agentType} task=${params.task.slice(0, 80)}${params.task.length > 80 ? "…" : ""}`;
+        const header = `[ithacus:${agentType}] task=${params.task.slice(0, 80)}${params.task.length > 80 ? "…" : ""}`;
         const emit = (text: string, details: DispatchDetails): void => {
           onUpdate?.({ content: [{ type: "text" as const, text }], details });
         };
@@ -457,7 +457,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // exit) PREPENDED to the child's output — so the parent LLM and any tool
       // result renderer see what actually ran, not just the prose.
       const mp = res.model ? ` model=${res.model}${res.provider ? `@${res.provider}` : ""}` : "";
-      const status = `[ithacus-dispatch] agent=${res.agent}${mp} duration=${res.durationMs}ms exit=${res.exitCode} success=${res.success}`;
+      const status = `[ithacus:${res.agent}]${mp} duration=${res.durationMs}ms exit=${res.exitCode} success=${res.success}`;
       return {
         content: [
           { type: "text" as const, text: `${status}\n\n${res.output || res.stderr || "(no output)"}` },
