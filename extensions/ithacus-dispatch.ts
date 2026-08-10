@@ -247,24 +247,38 @@ class IthDispatchCard {
   }
 
   render(_width: number): string[] {
-    const bold = this.t.bold ?? ((x: string) => x);
-    const modelStr = this.model ?? "resolving…";
-    const dur = this.durationMs > 0 ? fmtDuration(this.durationMs) : "running…";
-    const statusText =
-      this.status === "running" ? this.t.fg("accent", "⟳ running")
-      : this.status === "success" ? this.t.fg("green", "✓ success")
-      : this.t.fg("red", `✗ failed (exit ${this.exitCode})`);
-    // ithacus's own visual language — mirrors /ithacus-menu: borderless,
-    // em-dash title (like `ithacus v0.3.11 — status`), aligned label columns
-    // (like the menu's padded agent rows), accent for model, muted for meta.
-    // `·` is the inline stat separator (like the menu's `crew … · turn …`).
-    const label = (s: string): string => s.padEnd(7);
-    return [
-      bold(`ithacus — ${this.agentType}`),
-      `  ${label("model")} ${this.t.fg("accent", modelStr)}`,
-      `  ${label("status")} ${statusText} ${this.t.fg("muted", `· ${dur}`)}`,
-      `  ${label("task")} ${this.t.fg("muted", this.taskPreview)}`,
-    ];
+    // DEFENSIVE: render() is called from pi's TUI render timer. An uncaught
+    // throw here kills the entire process (the v0.3.12 crash: `Unknown theme
+    // color: green`). Wrap everything so a bad color ALWAYS degrades to plain
+    // text instead of crashing pi. Never let a Component render crash the host.
+    try {
+      const bold = this.t.bold ?? ((x: string) => x);
+      const fg = (c: string, t: string): string => {
+        try { return this.t.fg(c, t); } catch { return t; }
+      };
+      const modelStr = this.model ?? "resolving…";
+      const dur = this.durationMs > 0 ? fmtDuration(this.durationMs) : "running…";
+      // Valid pi theme fg colors: accent, success, error, warning, muted, dim.
+      // (NOT green/red — those throw `Unknown theme color` and crash pi.)
+      const statusText =
+        this.status === "running" ? fg("accent", "⟳ running")
+        : this.status === "success" ? fg("success", "✓ success")
+        : fg("error", `✗ failed (exit ${this.exitCode})`);
+      // ithacus's own visual language — mirrors /ithacus-menu: borderless,
+      // em-dash title (like `ithacus v0.3.11 — status`), aligned label columns
+      // (like the menu's padded agent rows), accent for model, muted for meta.
+      // `·` is the inline stat separator (like the menu's `crew … · turn …`).
+      const label = (s: string): string => s.padEnd(7);
+      return [
+        bold(`ithacus — ${this.agentType}`),
+        `  ${label("model")} ${fg("accent", modelStr)}`,
+        `  ${label("status")} ${statusText} ${fg("muted", `· ${dur}`)}`,
+        `  ${label("task")} ${fg("muted", this.taskPreview)}`,
+      ];
+    } catch {
+      // Last-resort plain text — never crash the host TUI.
+      return [`ithacus — ${this.agentType}`, this.taskPreview];
+    }
   }
 }
 
