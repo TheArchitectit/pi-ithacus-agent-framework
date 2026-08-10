@@ -31,7 +31,8 @@
 #   9. Post-publish device instructions.
 #
 # Usage:
-#   ./scripts/deploy.sh 0.2.0
+#   ./scripts/deploy.sh           # auto patch bump (current+0.0.1)
+#   ./scripts/deploy.sh 0.3.0     # explicit version (major/minor jumps explicit)
 #
 # Exit codes: non-zero on any failure (set -euo pipefail). Nothing is published
 # if any step fails.
@@ -39,22 +40,32 @@
 set -euo pipefail
 
 # --- args --------------------------------------------------------------------
-if [[ $# -ne 1 ]]; then
-	echo "usage: $0 <new-version>" >&2
-	echo "  e.g. $0 0.2.0" >&2
-	exit 2
-fi
-
-NEW_VERSION="$1"
-NEW_VERSION="${NEW_VERSION#v}" # accept v-prefixed input
-
-if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-	echo "[deploy] ERROR: '$NEW_VERSION' is not a valid semver." >&2
+# No arg  → auto-bump patch (+0.0.1) from the committed package.json.
+# One arg → use it verbatim (v-prefix accepted). Major/minor jumps stay explicit.
+if [[ $# -gt 1 ]]; then
+	echo "usage: $0 [new-version]" >&2
+	echo "  e.g. $0            # auto patch: <current>+0.0.1" >&2
+	echo "  e.g. $0 0.3.0      # explicit semver" >&2
 	exit 2
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+CURRENT_VERSION="$(node -e "console.log(require('./package.json').version)")"
+
+if [[ $# -eq 1 ]]; then
+	NEW_VERSION="$1"
+	NEW_VERSION="${NEW_VERSION#v}" # accept v-prefixed input
+else
+	NEW_VERSION="$(node -e "const v=require('./package.json').version.split('.');v[2]=String(parseInt(v[2],10)+1);console.log(v.join('.'))")"
+	echo "[deploy] no version given → auto patch bump: $CURRENT_VERSION → $NEW_VERSION"
+fi
+
+if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+	echo "[deploy] ERROR: '$NEW_VERSION' is not a valid semver." >&2
+	exit 2
+fi
 
 echo "[deploy] ithacus publish pipeline → v$NEW_VERSION"
 echo "[deploy] working dir: $ROOT"
@@ -124,11 +135,10 @@ done
 echo "[deploy] npm payload verified (dist/extensions + extensions/agents present)."
 
 # --- 3. bump version ----------------------------------------------------------
-CURRENT_VERSION="$(node -e "console.log(require('./package.json').version)")"
 if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
 	echo "[deploy] package.json already at v$NEW_VERSION."
 else
-	echo "[deploy] bumping package.json $CURRENT_VERSION → $NEW_VERSION"
+	echo "[deploy] bumping package.json $CURRENT_VERSION → $NEW_VERSION (incl. package-lock.json)"
 	npm version "$NEW_VERSION" --no-git-tag-version
 fi
 
