@@ -14,6 +14,7 @@ import { IthRuntime } from "./ithacus-runtime.js";
 import { registerEventHandlers } from "./ithacus-events/register.js";
 import { registerTeamCommands } from "./ithacus-commands.js";
 import { registerDispatchTool } from "./ithacus-dispatch.js";
+import { registerMailboxTool } from "./ithacus-message.js";
 import { registerSetupCommand } from "./ithacus-setup.js";
 import { registerMenuCommand } from "./ithacus-menu.js";
 import { registerVersionWidget } from "./ithacus-widget.js";
@@ -30,6 +31,9 @@ export default function (pi: ExtensionAPI) {
   // per-agent model). Clears the phantom `pi.callTool` dispatch for good.
   // runtime wires the first-dispatch onboarding notice (one-shot, per-repo).
   registerDispatchTool(pi, runtime);
+  // Task #16: inter-agent mailbox (claw-code PR e96c6675 pattern) — shared
+  // ith_inbox table, agents address each other by ITHACUS_AGENT_ID env name.
+  registerMailboxTool(pi, runtime);
   // `/ithacus-setup`: bind models+providers to roles + scaffold new agents.
   registerSetupCommand(pi);
   // Sprint 5.11: `/ithacus-menu` — persistent status overlay (version, crew,

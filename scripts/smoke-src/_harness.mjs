@@ -75,6 +75,7 @@ export const { synthesize, majorityVote, weightedMerge, firstWins, detectConflic
 export const { SwarmStore, createSwarmStore } = await import(join(buildDir, 'store-swarm.ts'))
 export const { PlanSynthesizer, createPlanSynthesizer, PlanRunner, createPlanRunner } = await import(join(buildDir, 'plan.ts'))
 export const resolver = await import(join(buildDir, 'provider-resolver.ts'))
+export const mailbox = await import(join(buildDir, 'mailbox.ts'))
 
 export let failures = 0;
 export function check(name, cond) {

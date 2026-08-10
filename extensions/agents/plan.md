@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Produces an implementation plan from Explore findings and the task goal; read-only
-tools: read, grep, find, ls
+tools: read, grep, find, ls, ithacus-mailbox
 model: claude-sonnet-4-5
 ---
 

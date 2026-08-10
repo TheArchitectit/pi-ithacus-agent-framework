@@ -52,6 +52,12 @@ export class IthStore {
     this.stateDir = repoStateDir(cwd, STATE_DIR_DEFAULT);
     mkdirSync(this.stateDir, { recursive: true });
     this.db = new DatabaseSync(join(this.stateDir, "sqlite.db"));
+    // WAL + busy_timeout: the parent pi + every spawned child (loading this
+    // extension) open this same file concurrently — default busy timeout 0
+    // throws SQLITE_BUSY instantly on a contended commit. 5s grace spins
+    // through transient contention; single-statement writes never wait long.
+    this.db.exec("PRAGMA journal_mode=WAL;");
+    this.db.exec("PRAGMA busy_timeout=5000;");
     this.db.exec(SCHEMA);
     this.migrateSchema();
   }
@@ -178,6 +184,29 @@ export class IthStore {
   }
   markRead(id: string): void {
     this.db.prepare(`UPDATE ith_inbox SET read = 1 WHERE id = ?`).run(id);
+  }
+  /** Count of unread messages for one agent (mailbox widget/tool). */
+  unreadCount(agentId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM ith_inbox WHERE agentId = ? AND read = 0`)
+      .get(agentId) as unknown as { n: number };
+    return row.n;
+  }
+  /** List an agent's inbox; includeRead=true returns history too. */
+  inbox(agentId: string, includeRead = false): IthInboxMessage[] {
+    const sql = includeRead
+      ? `SELECT * FROM ith_inbox WHERE agentId = ? ORDER BY ts`
+      : `SELECT * FROM ith_inbox WHERE agentId = ? AND read = 0 ORDER BY ts`;
+    return this.db.prepare(sql).all(agentId) as unknown as IthInboxMessage[];
+  }
+  /** Every known mailbox address: distinct recipients + senders in ith_inbox. */
+  inboxContacts(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT agentId AS a FROM ith_inbox UNION SELECT fromAgent AS a FROM ith_inbox WHERE fromAgent IS NOT NULL`,
+      )
+      .all() as unknown as Array<{ a: string }>;
+    return rows.map((r) => r.a).filter((a) => a && a.length > 0);
   }
 
   addMemory(m: IthMemory): void {

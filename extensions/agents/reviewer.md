@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Senior code reviewer for quality, security, and maintainability analysis; read-only + read-only bash
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, ithacus-mailbox
 model: claude-sonnet-4-5
 ---
 

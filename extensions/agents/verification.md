@@ -1,7 +1,7 @@
 ---
 name: verification
 description: Verifies a plan against the codebase and existing tests/types; read-only + read-only bash
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, ithacus-mailbox
 model: claude-sonnet-4-5
 ---
 

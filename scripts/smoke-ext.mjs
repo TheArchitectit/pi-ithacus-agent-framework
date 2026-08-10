@@ -97,7 +97,7 @@ try {
   check("agent.find Verification AgentRole", agentsMod.findAgent(discovered, "Verification")?.name === "verification");
 
   // frontmatter parse: tools split + model extracted + body stripped of fence
-  check("agent.explore tools count", explore.tools.length === 5);
+  check("agent.explore tools count", explore.tools.length === 6);
   check("agent.explore tools no blanks", explore.tools.every((t) => t.length > 0));
   check("agent.explore body not frontmatter", !explore.systemPrompt.startsWith("---"));
   check("agent.explore description set", explore.description.length > 0 && !explore.description.startsWith("name:"));
@@ -199,7 +199,7 @@ try {
   check("spawn.args has --provider", recordedArgs.includes("--provider") && recordedArgs.includes("custom"));
   check("spawn.args model split (no slash)", !recordedArgs.includes("custom/gpt-4o"));
   check("spawn.args has --tools", recordedArgs.includes("--tools"));
-  check("spawn.args reviewer tools", recordedArgs.includes("read,grep,find,ls,bash"));
+  check("spawn.args reviewer tools", recordedArgs.includes("read,grep,find,ls,bash,ithacus-mailbox"));
   check("spawn.args has Task prefix", recordedArgs.some((a) => a.startsWith("Task: ")));
 
   // --- mock: no --model when agent has none in frontmatter (defensive) ---
