@@ -8,6 +8,10 @@
   },
   "notes": "Runtime depends ONLY on Node built-ins (node:sqlite, node:fs, node:path, node:os, node:child_process). TypeScript types are stripped natively by Node >= 22.6 (--experimental-strip-types); no tsc install required to run.",
   "main": "dist/extensions/ithacus.js",
+  "files": [
+    "dist/",
+    "extensions/agents/*.md"
+  ],
   "pi": {
     "extensions": [
       "./dist/extensions/ithacus.js"
@@ -22,6 +26,7 @@
     "semantic": "node scripts/semantic-scan.mjs",
     "schema-health": "node scripts/schema-health-check.mjs",
     "deploy": "bash scripts/deploy.sh",
+    "prepublishOnly": "npm run gate",
     "gate": "npm run build && npm run lint && npm run guardrails && npm run semantic && npm run schema-health && npm run regression && npm test"
   },
   "dependencies": {},

@@ -9,17 +9,23 @@
 # ithacus is zero-runtime-deps (node built-ins only) and ships no assets.
 #
 # Enforces (in order):
+#   0. Registry preflight: npm auth live (npm whoami) + target version NOT
+#      already on the registry. Fails fast BEFORE any irreversible work.
 #   1. Clean git tree (no uncommitted changes).
 #   2. Full gate: build + lint + smoke + regression (failure registry +
 #      pattern violations) + guardrails + semantic + schema-health.
-#      (TODO: regression_check.py --soft-as-hard feature for promoting
-#      soft-limit violations on changed files to blocking — not yet
-#      implemented; see gate step for details.)
-#   3. Bump package.json version (lock file optional — ithacus is zero-deps).
+#   2b. Payload verify: npm pack --dry-run must contain dist/extensions/
+#       ithacus.js + extensions/agents/*.md — a broken tarball is never
+#       tagged, let alone published. package.json "files" whitelists dist/
+#       + extensions/agents only: src/, scripts/, tests/, docs/ never ship.
+#   3. Bump package.json version (package-lock.json IS committed: CI uses
+#      `npm ci`, which requires the lockfile).
 #   4. Commit the version bump.
 #   5. Tag (annotated) + push BEFORE publish — a push failure aborts before
 #      the irreversible npm publish.
 #   6. npm publish (the ONLY distribution path — PREVENT-DIST-001).
+#      package.json "prepublishOnly" reruns the full gate, so even a manual
+#      `npm publish` can never skip testing.
 #   7. Merge release branch into master.
 #   8. GitHub release with notes.
 #   9. Post-publish device instructions.
@@ -52,6 +58,20 @@ cd "$ROOT"
 
 echo "[deploy] ithacus publish pipeline → v$NEW_VERSION"
 echo "[deploy] working dir: $ROOT"
+
+# --- 0. registry preflight (fail fast, BEFORE any irreversible work) ----------
+# a) npm auth must be live; discovering this at step 6 (after tag push) is too late.
+if ! npm whoami >/dev/null 2>&1; then
+	echo "[deploy] ERROR: not logged in to npm. Run: npm login" >&2
+	exit 1
+fi
+echo "[deploy] npm auth OK (user: $(npm whoami))."
+# b) the target version must NOT already be on the registry.
+if npm view "ithacus@$NEW_VERSION" version >/dev/null 2>&1; then
+	echo "[deploy] ERROR: ithacus@$NEW_VERSION is already published on the registry." >&2
+	exit 1
+fi
+echo "[deploy] registry preflight OK: ithacus@$NEW_VERSION not yet published."
 echo "[deploy] ithacus uses --experimental-strip-types at runtime (Node ≥ 22.6 strips"
 echo "[deploy] TS types natively), but tsc build+lint stay in the gate — type safety"
 echo "[deploy] is enforced, not optional. A failing build means: FIX IT, don't skip it."
@@ -90,6 +110,19 @@ node scripts/semantic-scan.mjs
 node scripts/schema-health-check.mjs
 echo "[deploy] gate green."
 
+# --- 2b. npm payload verification (before tagging/pushing) -------------------
+# The gate built dist/, so the payload can be checked now. A broken tarball
+# must never be tagged, let alone published.
+PACK_LIST="$(npm pack --dry-run 2>&1)"
+for required in "dist/extensions/ithacus.js" "extensions/agents/explore.md"; do
+	if ! grep -qF "$required" <<<"$PACK_LIST"; then
+		echo "[deploy] ERROR: npm payload missing '$required' — package would be broken." >&2
+		printf '%s\n' "$PACK_LIST" | grep -E "total files|package size" >&2 || true
+		exit 1
+	fi
+done
+echo "[deploy] npm payload verified (dist/extensions + extensions/agents present)."
+
 # --- 3. bump version ----------------------------------------------------------
 CURRENT_VERSION="$(node -e "console.log(require('./package.json').version)")"
 if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
@@ -100,9 +133,8 @@ else
 fi
 
 # --- 4. commit version bump --------------------------------------------------
-# ithacus is zero-runtime-deps (node built-ins only), so package-lock.json
-# may not exist. Check package.json for change (the only file a version bump
-# touches); only add the lock file if present.
+# package-lock.json IS committed (CI's `npm ci` requires it). npm version bumps
+# its version field too, so stage it whenever it exists.
 if git diff --quiet -- package.json; then
 	echo "[deploy] nothing to commit (version already set)."
 else
