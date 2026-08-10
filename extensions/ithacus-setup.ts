@@ -6,9 +6,10 @@
  * <repo>/.pi/ithacus/agents/<role>.md (the same dir discoverIthacusAgents()
  * reads as "project" overrides that win over the bundled roster).
  *
- * Reads provider/model config from pi-setup's models.json via
- * loadPiSetupConfig() — so /ithacus-setup + /setup are complementary: /setup
- * manages providers/models, /ithacus-setup binds them to roles.
+ * Reads provider/model config from models.json via loadPiSetupConfig().
+ * Provider/model management is owned BY ithacus (ithacus-providers.ts):
+ * pi-setup's /setup is shared with other extensions, so /ithacus-setup embeds
+ * a "Manage providers…" submenu that needs no pi-setup install.
  *
  * PREVENT-ITH-004: local fs writes to .pi/ithacus + reads of pi-setup's local
  * config. No network. Mirrors ithacus-agents.ts + setup.ts (which read/write
@@ -22,6 +23,7 @@ import type {
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadPiSetupConfig } from "./ithacus-provider-config.js";
+import { providersMenu, providerSnapshot } from "./ithacus-providers.js";
 import {
   discoverIthacusAgents,
   type AgentConfig,
@@ -154,14 +156,15 @@ export function registerSetupCommand(pi: ExtensionAPI): void {
     handler: async (_args, ctx: ExtensionCommandContext) => {
       const ui = ctx.ui;
 
-      // Step 0: configure providers if none exist (route to /setup).
-      const models = collectModels();
+      // Step 0: no providers yet → drop straight into ithacus's own
+      // providers submenu (NOT pi-setup's /setup — that is shared with other
+      // extensions and must not be a dependency).
+      let models = collectModels();
       if (models.length === 0) {
-        ui.notify(
-          "No providers configured. Run /setup (pi-setup) to add a provider + models first, then re-run /ithacus-setup.",
-          "warning",
-        );
-        return;
+        ui.notify("No providers configured yet — add one now.", "info");
+        await providersMenu(ui, pi);
+        models = collectModels();
+        if (models.length === 0) return;
       }
 
       const providerCount = new Set(models.map((m) => m.provider)).size;
@@ -174,13 +177,23 @@ export function registerSetupCommand(pi: ExtensionAPI): void {
       let step: "roles" | "scaffold" | "" = "roles";
       while (step) {
         if (step === "roles") {
+          const snap = providerSnapshot();
           const roleChoices = [
             ...ROLES.map((r) => `Bind: ${r}`),
+            "Manage providers…",
             "--- Continue ---",
           ];
-          const pick = await ui.select("ithacus sub-agent roles:", roleChoices);
+          const pick = await ui.select(
+            `ithacus sub-agent roles (${snap.providerCount} provider(s), ${snap.modelCount} model(s)):`,
+            roleChoices,
+          );
           if (!pick || pick === "--- Continue ---") {
             step = "scaffold";
+            continue;
+          }
+          if (pick === "Manage providers…") {
+            await providersMenu(ui, pi);
+            models = collectModels();
             continue;
           }
           const role = pick.replace(/^Bind: /, "") as Role;
@@ -205,6 +218,15 @@ export function registerSetupCommand(pi: ExtensionAPI): void {
       }
 
       ui.notify("ithacus setup complete.", "info");
+    },
+  });
+
+  // Standalone direct-access command for provider/model management.
+  pi.registerCommand("ithacus-providers", {
+    description:
+      "Manage ithacus providers + models (add / edit / remove) — no pi-setup required",
+    handler: async (_args, ctx: ExtensionCommandContext) => {
+      await providersMenu(ctx.ui, pi);
     },
   });
 }
