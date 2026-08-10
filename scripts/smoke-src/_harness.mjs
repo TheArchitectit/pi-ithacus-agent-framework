@@ -76,6 +76,7 @@ export const { SwarmStore, createSwarmStore } = await import(join(buildDir, 'sto
 export const { PlanSynthesizer, createPlanSynthesizer, PlanRunner, createPlanRunner } = await import(join(buildDir, 'plan.ts'))
 export const resolver = await import(join(buildDir, 'provider-resolver.ts'))
 export const mailbox = await import(join(buildDir, 'mailbox.ts'))
+export const toolVisibility = await import(join(buildDir, 'tool-visibility.ts'))
 
 export let failures = 0;
 export function check(name, cond) {

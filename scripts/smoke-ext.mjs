@@ -308,6 +308,45 @@ try {
   check("dispatch.params agent optional", registeredTool?.parameters?.properties?.agent !== undefined);
 
   // ========================================================================
+  // 3b. ToolVisibility registry (task #22) — register-time tier filter
+  // ========================================================================
+  const registryMod = await import(join(tmpDir, "ithacus-tool-registry.ts"));
+  check("tv.registry mailbox PUBLIC", registryMod.TOOL_VISIBILITY["ithacus-mailbox"] === 0);
+  check("tv.registry dispatch INTERNAL", registryMod.TOOL_VISIBILITY["ithacus-dispatch"] === 1);
+  check("tv.registry availableToolNames interactive has both",
+    registryMod.availableToolNames().sort().join(",") === "ithacus-dispatch,ithacus-mailbox");
+  check("tv.registry availableToolNames child has only mailbox",
+    registryMod.availableToolNames(registryMod.currentCallerContext({ ITHACUS_AGENT_ID: "explore" })).join(",") === "ithacus-mailbox");
+
+  // Register-time filter: simulate a CHILD session (ITHACUS_AGENT_ID set).
+  // ithacus-dispatch (INTERNAL) must NOT register; ithacus-mailbox (PUBLIC) must.
+  const msgMod = await import(join(tmpDir, "ithacus-message.ts"));
+  registryMod._resetCallerContextCache();
+  const prevAgentId = process.env.ITHACUS_AGENT_ID;
+  process.env.ITHACUS_AGENT_ID = "explore";
+  try {
+    const childRegistered = [];
+    const childFakePi = {
+      registerTool: (t) => { childRegistered.push(t.name); },
+      on: () => {}, registerCommand: () => {}, setModel: () => {},
+    };
+    // registerMailboxTool needs a runtime for bindRepo/event; pass a minimal stub.
+    const stubRuntime = {
+      bindRepo: () => {}, appendEvent: () => {}, store: null, runningByType: new Map(),
+    };
+    dispatchMod.registerDispatchTool(childFakePi);
+    msgMod.registerMailboxTool(childFakePi, stubRuntime);
+    check("tv.child register-time filter: dispatch NOT registered",
+      !childRegistered.includes("ithacus-dispatch"));
+    check("tv.child register-time filter: mailbox registered",
+      childRegistered.includes("ithacus-mailbox"));
+  } finally {
+    if (prevAgentId === undefined) delete process.env.ITHACUS_AGENT_ID;
+    else process.env.ITHACUS_AGENT_ID = prevAgentId;
+    registryMod._resetCallerContextCache();
+  }
+
+  // ========================================================================
   // 4. REGRESSION: published-package layout (v0.1.0 bug repro)
   // ========================================================================
   // v0.1.0 shipped ithacus-agents.js in dist/extensions/ but agents at

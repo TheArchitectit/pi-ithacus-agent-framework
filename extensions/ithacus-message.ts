@@ -26,6 +26,8 @@ import {
   mailboxSend,
   resolveSelfAgentId,
 } from "../src/mailbox.js";
+import { registerToolWithVisibility } from "./ithacus-tool-registry.js";
+import { ToolVisibility } from "../src/tool-visibility.js";
 
 const MailboxParams = Type.Object({
   action: Type.Union(
@@ -167,5 +169,5 @@ export function registerMailboxTool(pi: ExtensionAPI, runtime: IthRuntime): void
     },
   };
 
-  pi.registerTool(tool);
+  registerToolWithVisibility(pi, tool, ToolVisibility.PUBLIC);
 }

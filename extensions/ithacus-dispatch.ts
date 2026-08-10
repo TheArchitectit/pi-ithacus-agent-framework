@@ -43,6 +43,8 @@ import { loadPiSetupConfig } from "./ithacus-provider-config.js";
 import { resolveProviderForModel } from "../src/provider-resolver.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
+import { registerToolWithVisibility } from "./ithacus-tool-registry.js";
+import { ToolVisibility } from "../src/tool-visibility.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -473,5 +475,5 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
     },
   };
 
-  pi.registerTool(tool);
+  registerToolWithVisibility(pi, tool, ToolVisibility.INTERNAL);
 }
