@@ -21,28 +21,15 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readFileSync, existsSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { ownVersion } from "./ithacus-version.js";
 import { discoverIthacusAgents, type AgentConfig } from "./ithacus-agents.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { providerSnapshot } from "./ithacus-providers.js";
 
 // ---------------------------------------------------------------------------
 // data
-
-/** Read this package's version across source (extensions/) and compiled
- *  (dist/extensions/) layouts — mirrors dashboard-server entry resolution. */
-function ownVersion(): string {
-  const here = dirname(fileURLToPath(import.meta.url)); // extensions/ or dist/extensions/
-  for (const cand of [join(here, "..", "package.json"), join(here, "..", "..", "package.json")]) {
-    try {
-      const pkg = JSON.parse(readFileSync(cand, "utf-8"));
-      if (pkg.version) return String(pkg.version);
-    } catch { /* try next candidate */ }
-  }
-  return "?";
-}
 
 interface MenuSnapshot {
   version: string;
