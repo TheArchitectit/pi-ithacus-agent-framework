@@ -167,11 +167,18 @@ function fmtDuration(ms: number): string {
 // ---------------------------------------------------------------------------
 // IthDispatchCard — a real pi TUI overlay Component (task #25 polish).
 //
+// Visual identity: ithacus's OWN look, not a clone of pi-crew or any other
+// extension. The overlay MECHANISM (ctx.ui.custom) is pi's platform API —
+// shared by necessity — but the RENDER is ithacus's established visual
+// language, deliberately consistent with /ithacus-menu: borderless (no
+// box-drawing), em-dash title, aligned label columns, accent for model,
+// muted for meta, green/red for status. pi-crew has its own branding; this
+// is ithacus's.
+//
 // Why a Component and not ANSI-in-text: pi's tool-result text renderer ESCAPES
 // ANSI (shows literal [1m etc.), but a Component's render() output passes ANSI
 // through (pi strips it for width calc). So theme colors + the overlay popup
-// only work via ctx.ui.custom({ overlay: true }) + a Component — the same
-// vehicle /ithacus-menu uses. Pattern mirrors IthMenu (ithacus-menu.ts).
+// only work via ctx.ui.custom({ overlay: true }) + a Component.
 // ---------------------------------------------------------------------------
 
 interface ThemeLike {
@@ -247,10 +254,16 @@ class IthDispatchCard {
       this.status === "running" ? this.t.fg("accent", "⟳ running")
       : this.status === "success" ? this.t.fg("green", "✓ success")
       : this.t.fg("red", `✗ failed (exit ${this.exitCode})`);
+    // ithacus's own visual language — mirrors /ithacus-menu: borderless,
+    // em-dash title (like `ithacus v0.3.11 — status`), aligned label columns
+    // (like the menu's padded agent rows), accent for model, muted for meta.
+    // `·` is the inline stat separator (like the menu's `crew … · turn …`).
+    const label = (s: string): string => s.padEnd(7);
     return [
-      bold(`ithacus · ${this.agentType}`),
-      `model: ${this.t.fg("accent", modelStr)} · ${dur} · ${statusText}`,
-      this.t.fg("muted", this.taskPreview),
+      bold(`ithacus — ${this.agentType}`),
+      `  ${label("model")} ${this.t.fg("accent", modelStr)}`,
+      `  ${label("status")} ${statusText} ${this.t.fg("muted", `· ${dur}`)}`,
+      `  ${label("task")} ${this.t.fg("muted", this.taskPreview)}`,
     ];
   }
 }
@@ -527,7 +540,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
         const emit = (text: string, details: DispatchDetails): void => {
           onUpdate?.({ content: [{ type: "text" as const, text }], details });
         };
-        emit(`ithacus · ${agentType}\ntask: ${taskPreview}\n  ⟳ spawning sub-agent…`, {
+        emit(`ithacus — ${agentType}\ntask: ${taskPreview}\n  ⟳ spawning sub-agent…`, {
           agent: agentType, exitCode: -1, durationMs: 0, success: false,
           model: params.model, provider: params.provider,
         });
@@ -544,7 +557,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
               : info.phase === "text" ? `  … ${info.text.slice(-200)}`
               : info.phase === "message_end" ? `  ✓ done`
               : `  · ${info.phase}`;
-            emit(`ithacus · ${agentType}${modelTag}\n${line}`, {
+            emit(`ithacus — ${agentType}${modelTag}\n${line}`, {
               agent: agentType, exitCode: -1, durationMs: 0, success: false,
               model: info.model ?? params.model, provider: params.provider,
             });
@@ -559,9 +572,10 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       const modelStr = res.model ? `${res.model}${res.provider ? `@${res.provider}` : ""}` : "default";
       const dur = fmtDuration(res.durationMs);
       // Pop a REAL overlay popup (task #25 polish): theme-colored green/red,
-      // dismissible, auto-fades after ~1.8s. ithacus's own look — the
-      // `ithacus · <role>` identity line + labeled stats, rendered by pi's
-      // overlay system with THEME colors (not ANSI hacks that pi escapes).
+      // dismissible, auto-fades after ~1.8s. ithacus's own visual identity —
+      // the `ithacus — <role>` em-dash title (matching /ithacus-menu) +
+      // aligned label columns + theme colors, rendered by pi's overlay system
+      // (not ANSI hacks that pi escapes). Borderless, like the menu.
       // Best-effort: if pi blocks overlays during tool execution, the clean
       // text result below still carries the info.
       try {
@@ -581,7 +595,9 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // Clean plain-text result for the tool card (pi renders this natively;
       // no ANSI/box — those render as literal escapes in tool-result text).
       const statusMark = res.success ? "✓ success" : `✗ failed (exit ${res.exitCode})`;
-      const header = `ithacus · ${res.agent}\nmodel: ${modelStr} · ${dur} · ${statusMark}`;
+      // ithacus identity line uses em-dash (—) like the /ithacus-menu title
+      // (`ithacus v0.3.11 — status`); `·` is the inline stat separator.
+      const header = `ithacus — ${res.agent}\nmodel: ${modelStr} · ${dur} · ${statusMark}`;
       return {
         content: [
           { type: "text" as const, text: `${header}\n\n${res.output || res.stderr || "(no output)"}` },
