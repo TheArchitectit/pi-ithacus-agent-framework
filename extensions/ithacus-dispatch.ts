@@ -164,68 +164,95 @@ function fmtDuration(ms: number): string {
   return `${m}m${s.toString().padStart(2, "0")}s`;
 }
 
-// ANSI color codes for the dispatch card. Best-effort: terminals that don't
-// render ANSI still show the box-drawing characters + plain text.
-const ANSI = {
-  green: "\x1b[32m",
-  red: "\x1b[31m",
-  cyan: "\x1b[36m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  reset: "\x1b[0m",
-} as const;
+// ---------------------------------------------------------------------------
+// IthDispatchCard — a real pi TUI overlay Component (task #25 polish).
+//
+// Why a Component and not ANSI-in-text: pi's tool-result text renderer ESCAPES
+// ANSI (shows literal [1m etc.), but a Component's render() output passes ANSI
+// through (pi strips it for width calc). So theme colors + the overlay popup
+// only work via ctx.ui.custom({ overlay: true }) + a Component — the same
+// vehicle /ithacus-menu uses. Pattern mirrors IthMenu (ithacus-menu.ts).
+// ---------------------------------------------------------------------------
 
-/** Strip ANSI escape codes for display-width calculation. */
-function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+interface ThemeLike {
+  fg: (color: string, text: string) => string;
+  bold?: (text: string) => string;
 }
+const NO_THEME: ThemeLike = { fg: (_c, t) => t, bold: (t) => t };
 
-/** Build a boxed dispatch card with ANSI-colored status line. */
-function dispatchCard(opts: {
-  agent: string;
-  model: string;
-  dur: string;
-  success: boolean;
-  exitCode: number;
-  task?: string;
-}): string {
-  const { agent, model, dur, success, exitCode, task } = opts;
-  const statusColor = success ? ANSI.green : ANSI.red;
-  const statusMark = success ? "✓ success" : `✗ failed (exit ${exitCode})`;
+class IthDispatchCard {
+  private t: ThemeLike;
+  private status: "running" | "success" | "failed" = "running";
+  private model?: string;
+  private durationMs = 0;
+  private exitCode = 0;
+  private dismissed = false;
+  // Declared as explicit fields (not constructor parameter properties) so
+  // Node 26's strip-only TS stripper can load this file in the smoke tests —
+  // parameter properties (`constructor(private x: T)`) are rejected there.
+  private agentType: string;
+  private taskPreview: string;
+  private done: (v: null) => void;
+  private requestRender: () => void;
 
-  const titlePlain = `ithacus · ${agent}`;
-  const modelPlain = `model: ${model} · ${dur} · ${statusMark}`;
-  const taskPlain = task ?? "";
-
-  const contentWidth = Math.max(
-    titlePlain.length,
-    modelPlain.length,
-    taskPlain ? taskPlain.length : 0,
-  );
-  const w = contentWidth + 2;
-
-  const padLine = (plain: string, styled: string): string => {
-    const padding = " ".repeat(Math.max(0, w - plain.length - 1));
-    return `│ ${styled}${padding}│`;
-  };
-
-  const titleStyled = `${ANSI.bold}${titlePlain}${ANSI.reset}`;
-  const modelStyled =
-    `${ANSI.dim}model:${ANSI.reset} ${ANSI.cyan}${model}${ANSI.reset}` +
-    `  ${ANSI.dim}·${ANSI.reset}  ${dur}` +
-    `  ${ANSI.dim}·${ANSI.reset}  ${statusColor}${statusMark}${ANSI.reset}`;
-
-  const lines = [
-    `╭${"─".repeat(w + 1)}╮`,
-    padLine(titlePlain, titleStyled),
-    padLine(modelPlain, modelStyled),
-  ];
-  if (task) {
-    const taskStyled = `${ANSI.dim}${taskPlain}${ANSI.reset}`;
-    lines.push(padLine(taskPlain, taskStyled));
+  constructor(
+    theme: unknown,
+    agentType: string,
+    taskPreview: string,
+    done: (v: null) => void,
+    requestRender: () => void,
+  ) {
+    this.t = (theme as ThemeLike) ?? NO_THEME;
+    this.agentType = agentType;
+    this.taskPreview = taskPreview;
+    this.done = done;
+    this.requestRender = requestRender;
   }
-  lines.push(`╰${"─".repeat(w + 1)}╯`);
-  return lines.join("\n");
+
+  /** Update live progress (during the dispatch). */
+  setProgress(model?: string): void {
+    if (model) this.model = model;
+    this.requestRender();
+  }
+
+  /** Mark done + auto-dismiss after a beat so the user sees the result. */
+  setDone(success: boolean, durationMs: number, exitCode: number, model?: string): void {
+    this.status = success ? "success" : "failed";
+    this.durationMs = durationMs;
+    this.exitCode = exitCode;
+    if (model) this.model = model;
+    this.requestRender();
+    setTimeout(() => this.dismiss(), 1800);
+  }
+
+  private dismiss(): void {
+    if (this.dismissed) return;
+    this.dismissed = true;
+    try { this.done(null); } catch { /* already dismissed */ }
+  }
+
+  invalidate(): void { /* no cached state */ }
+  dispose(): void { /* no resources */ }
+
+  /** Any key dismisses the popup. */
+  handleInput(_data: string): void {
+    this.dismiss();
+  }
+
+  render(_width: number): string[] {
+    const bold = this.t.bold ?? ((x: string) => x);
+    const modelStr = this.model ?? "resolving…";
+    const dur = this.durationMs > 0 ? fmtDuration(this.durationMs) : "running…";
+    const statusText =
+      this.status === "running" ? this.t.fg("accent", "⟳ running")
+      : this.status === "success" ? this.t.fg("green", "✓ success")
+      : this.t.fg("red", `✗ failed (exit ${this.exitCode})`);
+    return [
+      bold(`ithacus · ${this.agentType}`),
+      `model: ${this.t.fg("accent", modelStr)} · ${dur} · ${statusText}`,
+      this.t.fg("muted", this.taskPreview),
+    ];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +509,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       params: { agent?: string; task: string; model?: string; provider?: string; cwd?: string },
       signal: AbortSignal | undefined,
       onUpdate: ((partial: { content: Array<{ type: "text"; text: string }>; details: DispatchDetails }) => void) | undefined,
-      _ctx: ExtensionContext,
+      ctx: ExtensionContext,
     ) {
       // First-dispatch onboarding notice (one-shot, per-repo). Persisted in the
       // ith_kv store table via markOnboardingSeen(). Silent after the first
@@ -515,7 +542,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             const modelTag = info.model ? ` · ${info.model}` : "";
             const line = info.phase === "tool" ? `  → ${info.text}`
               : info.phase === "text" ? `  … ${info.text.slice(-200)}`
-              : info.phase === "message_end" ? `  ${ANSI.green}✓ done${ANSI.reset}`
+              : info.phase === "message_end" ? `  ✓ done`
               : `  · ${info.phase}`;
             emit(`ithacus · ${agentType}${modelTag}\n${line}`, {
               agent: agentType, exitCode: -1, durationMs: 0, success: false,
@@ -531,17 +558,33 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // result renderer see what actually ran, not just the prose.
       const modelStr = res.model ? `${res.model}${res.provider ? `@${res.provider}` : ""}` : "default";
       const dur = fmtDuration(res.durationMs);
-      const card = dispatchCard({
-        agent: res.agent,
-        model: modelStr,
-        dur,
-        success: res.success,
-        exitCode: res.exitCode,
-        task: params.task.length > 80 ? params.task.slice(0, 80) + "…" : params.task,
-      });
+      // Pop a REAL overlay popup (task #25 polish): theme-colored green/red,
+      // dismissible, auto-fades after ~1.8s. ithacus's own look — the
+      // `ithacus · <role>` identity line + labeled stats, rendered by pi's
+      // overlay system with THEME colors (not ANSI hacks that pi escapes).
+      // Best-effort: if pi blocks overlays during tool execution, the clean
+      // text result below still carries the info.
+      try {
+        await ctx.ui.custom<null>(
+          (_tui, theme, _kb, done) => {
+            const card = new IthDispatchCard(
+              theme, res.agent,
+              params.task.slice(0, 80) + (params.task.length > 80 ? "…" : ""),
+              done, () => _tui.requestRender(),
+            );
+            card.setDone(res.success, res.durationMs, res.exitCode, modelStr === "default" ? undefined : modelStr);
+            return card;
+          },
+          { overlay: true },
+        );
+      } catch { /* overlay best-effort — never block the tool result */ }
+      // Clean plain-text result for the tool card (pi renders this natively;
+      // no ANSI/box — those render as literal escapes in tool-result text).
+      const statusMark = res.success ? "✓ success" : `✗ failed (exit ${res.exitCode})`;
+      const header = `ithacus · ${res.agent}\nmodel: ${modelStr} · ${dur} · ${statusMark}`;
       return {
         content: [
-          { type: "text" as const, text: `${card}\n\n${res.output || res.stderr || "(no output)"}` },
+          { type: "text" as const, text: `${header}\n\n${res.output || res.stderr || "(no output)"}` },
         ],
         details: {
           agent: res.agent,
