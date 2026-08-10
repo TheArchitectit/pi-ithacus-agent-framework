@@ -164,6 +164,70 @@ function fmtDuration(ms: number): string {
   return `${m}m${s.toString().padStart(2, "0")}s`;
 }
 
+// ANSI color codes for the dispatch card. Best-effort: terminals that don't
+// render ANSI still show the box-drawing characters + plain text.
+const ANSI = {
+  green: "\x1b[32m",
+  red: "\x1b[31m",
+  cyan: "\x1b[36m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  reset: "\x1b[0m",
+} as const;
+
+/** Strip ANSI escape codes for display-width calculation. */
+function visibleLen(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+/** Build a boxed dispatch card with ANSI-colored status line. */
+function dispatchCard(opts: {
+  agent: string;
+  model: string;
+  dur: string;
+  success: boolean;
+  exitCode: number;
+  task?: string;
+}): string {
+  const { agent, model, dur, success, exitCode, task } = opts;
+  const statusColor = success ? ANSI.green : ANSI.red;
+  const statusMark = success ? "✓ success" : `✗ failed (exit ${exitCode})`;
+
+  const titlePlain = `ithacus · ${agent}`;
+  const modelPlain = `model: ${model} · ${dur} · ${statusMark}`;
+  const taskPlain = task ?? "";
+
+  const contentWidth = Math.max(
+    titlePlain.length,
+    modelPlain.length,
+    taskPlain ? taskPlain.length : 0,
+  );
+  const w = contentWidth + 2;
+
+  const padLine = (plain: string, styled: string): string => {
+    const padding = " ".repeat(Math.max(0, w - plain.length - 1));
+    return `│ ${styled}${padding}│`;
+  };
+
+  const titleStyled = `${ANSI.bold}${titlePlain}${ANSI.reset}`;
+  const modelStyled =
+    `${ANSI.dim}model:${ANSI.reset} ${ANSI.cyan}${model}${ANSI.reset}` +
+    `  ${ANSI.dim}·${ANSI.reset}  ${dur}` +
+    `  ${ANSI.dim}·${ANSI.reset}  ${statusColor}${statusMark}${ANSI.reset}`;
+
+  const lines = [
+    `╭${"─".repeat(w + 1)}╮`,
+    padLine(titlePlain, titleStyled),
+    padLine(modelPlain, modelStyled),
+  ];
+  if (task) {
+    const taskStyled = `${ANSI.dim}${taskPlain}${ANSI.reset}`;
+    lines.push(padLine(taskPlain, taskStyled));
+  }
+  lines.push(`╰${"─".repeat(w + 1)}╯`);
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // spawnAgent — the subprocess spawn (replaces pi.callTool at dispatch sites)
 // ---------------------------------------------------------------------------
@@ -451,7 +515,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             const modelTag = info.model ? ` · ${info.model}` : "";
             const line = info.phase === "tool" ? `  → ${info.text}`
               : info.phase === "text" ? `  … ${info.text.slice(-200)}`
-              : info.phase === "message_end" ? `  ✓ done`
+              : info.phase === "message_end" ? `  ${ANSI.green}✓ done${ANSI.reset}`
               : `  · ${info.phase}`;
             emit(`ithacus · ${agentType}${modelTag}\n${line}`, {
               agent: agentType, exitCode: -1, durationMs: 0, success: false,
@@ -467,11 +531,17 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // result renderer see what actually ran, not just the prose.
       const modelStr = res.model ? `${res.model}${res.provider ? `@${res.provider}` : ""}` : "default";
       const dur = fmtDuration(res.durationMs);
-      const statusMark = res.success ? "✓ success" : `✗ failed (exit ${res.exitCode})`;
-      const header = `ithacus · ${res.agent}\nmodel: ${modelStr} · ${dur} · ${statusMark}`;
+      const card = dispatchCard({
+        agent: res.agent,
+        model: modelStr,
+        dur,
+        success: res.success,
+        exitCode: res.exitCode,
+        task: params.task.length > 80 ? params.task.slice(0, 80) + "…" : params.task,
+      });
       return {
         content: [
-          { type: "text" as const, text: `${header}\n\n${res.output || res.stderr || "(no output)"}` },
+          { type: "text" as const, text: `${card}\n\n${res.output || res.stderr || "(no output)"}` },
         ],
         details: {
           agent: res.agent,
