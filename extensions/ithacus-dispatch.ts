@@ -216,10 +216,20 @@ class IthDispatchCard {
     this.requestRender = requestRender;
   }
 
+  /** Wrap requestRender so a TUI error never propagates and kills the overlay.
+   *  This was the v0.3.13 "no popup on long dispatches" bug: after a 56s
+   *  dispatch with heavy streaming onUpdate output, _tui.requestRender()
+   *  threw inside the factory → ctx.ui.custom rejected → the try/catch in
+   *  execute() swallowed it silently → no popup, no crash. safeRender
+   *  ensures the factory NEVER throws. */
+  private safeRender(): void {
+    try { this.requestRender(); } catch { /* TUI not ready — next tick */ }
+  }
+
   /** Update live progress (during the dispatch). */
   setProgress(model?: string): void {
     if (model) this.model = model;
-    this.requestRender();
+    this.safeRender();
   }
 
   /** Mark done + auto-dismiss after a beat so the user sees the result. */
@@ -228,8 +238,8 @@ class IthDispatchCard {
     this.durationMs = durationMs;
     this.exitCode = exitCode;
     if (model) this.model = model;
-    this.requestRender();
-    setTimeout(() => this.dismiss(), 1800);
+    this.safeRender();
+    setTimeout(() => this.dismiss(), 3000);
   }
 
   private dismiss(): void {
@@ -600,7 +610,14 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
               params.task.slice(0, 80) + (params.task.length > 80 ? "…" : ""),
               done, () => _tui.requestRender(),
             );
-            card.setDone(res.success, res.durationMs, res.exitCode, modelStr === "default" ? undefined : modelStr);
+            // DEFER setDone to the next tick: the factory runs BEFORE the TUI
+            // has mounted the overlay, so calling setDone (→ requestRender)
+            // synchronously here can lose the render or throw if the TUI is
+            // busy after a long dispatch (the v0.3.13 "no popup" bug). 50ms
+            // gives pi time to mount the overlay component first.
+            setTimeout(() => {
+              card.setDone(res.success, res.durationMs, res.exitCode, modelStr === "default" ? undefined : modelStr);
+            }, 50);
             return card;
           },
           { overlay: true },
