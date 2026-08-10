@@ -1,6 +1,6 @@
 {
   "name": "ithacus",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "A pi agent framework that orchestrates coordinated sub-agent teams directly from the .pi/ithacus folder.",
   "type": "module",
   "engines": {
