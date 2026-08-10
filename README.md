@@ -36,6 +36,14 @@ Brings popular agentic coding styles into [pi](https://github.com/earendil-works
 - **Agent handoff** — capability-based routing with priority and availability weighting
 - **Swarm dispatch** — priority-ordered work queue with blocked-wait, checkpointing, and result aggregation
 - **Result synthesis** — merges multiple agent outputs with attribution, conflict detection, and confidence scoring
+- **Team runs (pi runtime)** — createTeam/teamStatus/deleteTeam over `ith_runs/ith_agents/ith_tasks/ith_inbox` SQLite tables
+
+**pi UI surfaces (extensions/)**
+- **`ithacus-dispatch` tool** — LLM-invoked sub-agent dispatch: real pi subprocess, isolated context, per-agent model + provider resolution (roster: `agents/explore.md`, `plan.md`, `verification.md`, `reviewer.md`)
+- **`/ithacus-menu` overlay** — read-only status panel: version, crew, context pressure, agent roster with model@provider, state paths
+- **Version widget** — always-visible above-editor bar (`ithacus vX.Y.Z · pressure gauge · crew · context`), self-updating per frame
+- **Version-bump notice** — one-shot `[ithacus] updated: vX → vY` on upgrade (marker file, no network)
+- **`/ithacus-setup`** — provider onboarding command
 
 **Intelligence & tooling**
 - **Advisor mode** — second model watches turns and injects notes (concern/blocker/suggestion) with budget control
@@ -62,7 +70,7 @@ Brings popular agentic coding styles into [pi](https://github.com/earendil-works
 
 ## What's coming
 
-- **Sub-agent setup dashboard** — React web UI pairing with [pi-setup](https://github.com/TheArchitectit/pi-setup) for configuring agents and sub-agents without editing JSON. Same dashboard style as [pi-mega-compact](https://github.com/TheArchitectit/pi-mega-compact)
+- **Sub-agent setup dashboard** — React web UI pairing with [pi-setup](https://github.com/TheArchitectit/pi-setup) for configuring agents and sub-agents without editing JSON
 - **Extension wiring** — connecting the pi-agnostic LSP/DAP/browser/eval/TUI/collab clients to real runtime processes (LSP servers, Puppeteer/CDP, debug adapters, etc.)
 - **Budget governor** — USD cap with 50%/90% alerts and refuse-to-exceed
 - **Leader election** — capability-based election and delegation
@@ -77,7 +85,7 @@ Brings popular agentic coding styles into [pi](https://github.com/earendil-works
 
 ## How it fits in
 
-Install alongside [pi-mega-compact](https://github.com/TheArchitectit/pi-mega-compact) for context compression and pi-setup for the React config dashboard. Together they give you a full agentic coding environment that runs with any OpenAI-compatible provider — local or cloud.
+Configure providers with pi-setup (or pi's `/setup`); ithacus dispatches sub-agents against any OpenAI-compatible provider — local or cloud. Adding a context-compression extension alongside gives you a full agentic coding environment, but ithacus has zero extension dependencies and no external service requirements.
 
 ## Architecture
 
@@ -86,7 +94,7 @@ All `src/` modules are **pi-agnostic** — they never touch the network, filesys
 ## Install
 
 ```bash
-pi install npm:pi-ithacus-agent-framework
+pi install npm:ithacus
 ```
 
 From source:

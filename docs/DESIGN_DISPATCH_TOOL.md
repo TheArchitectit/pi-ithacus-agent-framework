@@ -1,9 +1,10 @@
 # Design: ithacus Dispatch Tool Migration
 
-> **Status**: Spec — not yet implemented. Gate is RED on 2 `callTool` errors
-> (`ithacus-swarm.ts:67`, `ithacus-team.ts:97`) by design; this doc is the
-> plan to clear them in a dedicated sprint. Do NOT stub or fake `callTool`
-> to make tsc green — that re-introduces the "weaken the gate" anti-pattern.
+> **Status**: ✅ SHIPPED (v0.3.0). The 2 `callTool` errors were cleared by the
+> real migration — `extensions/ithacus-dispatch.ts` registers `ithacus-dispatch`
+> via `pi.registerTool()` and spawns real `pi` subprocesses with per-agent
+> model + provider resolution (`resolveProviderForModel` + pi-setup config).
+> Smoke tests cover the spawn arg assembly via the injected `spawnImpl` seam.
 >
 > **Decision**: Hybrid — register an `ithacus-dispatch` tool via
 > `pi.registerTool()` (LLM-invoked entry point) AND ship ithacus's agent
@@ -165,11 +166,14 @@ processes pick up ithacus's roles:
 | `extensions/agents/explore.md` | Explore | scout/recon (read-only, fast) |
 | `extensions/agents/plan.md` | Plan | planner (read-only, structured plan) |
 | `extensions/agents/verification.md` | Verification | reviewer (read-only, quality) |
-| `extensions/agents/worker.md` | Worker | general-purpose implementer |
+| `extensions/agents/reviewer.md` | Reviewer | senior code review (read-only + bash) |
 
-Each file: YAML frontmatter (`name`, `description`, `tools`, `model`) +
-body = system prompt. The `model` field is the per-agent model assignment
-that realizes the mission ("different agents with different models").
+Each file: YAML frontmatter (`name`, `description`, `tools`, `model`;
+`provider` also supported — dispatch resolves it via
+`resolveProviderForModel`, falling back to the model-id prefix and pi-setup's
+config) + body = system prompt. The `model` field is the per-agent model
+assignment that realizes the mission ("different agents with different
+models").
 
 ### 3.3 Clean separation of concerns
 
@@ -255,19 +259,18 @@ spawned sub-agents call your configured pi providers.
 
 ## 6. Acceptance criteria (for the sprint that builds this)
 
-- [ ] `npm run gate` green (the 2 `callTool` errors cleared by real fix, not stub).
-- [ ] `ithacus-dispatch` tool registered; LLM can invoke it.
-- [ ] Spawning a child `pi` process produces an isolated context window.
-- [ ] Per-agent `--model` override respected (different models per child).
-- [ ] ithacus's existing orchestration (`runSwarm`, `executePlan`) drives
+- [x] `npm run gate` green (the 2 `callTool` errors cleared by real fix, not stub).
+- [x] `ithacus-dispatch` tool registered; LLM can invoke it.
+- [x] Spawning a child `pi` process produces an isolated context window.
+- [x] Per-agent `--model` override respected (different models per child).
+- [x] ithacus's existing orchestration (`runSwarm`, `executePlan`) drives
       the dispatch loop unchanged.
-- [ ] 4 markdown agent files in `extensions/agents/`, loadable by
+- [x] 4 markdown agent files in `extensions/agents/`, loadable by
       `discoverAgents()`.
-- [ ] PREVENT-ITH-004 stays green (no `node:http`/`net`; `child_process` OK).
-- [ ] No `as any` (PREVENT-011); typed `AgentToolResult<DispatchDetails>`.
-- [ ] `extensions/ithacus-dispatch.ts` ≤ 300 lines; split if it grows past.
-- [ ] Smoke tests cover the dispatch path (currently uncovered — the gap
-      that let `callTool` ship broken).
+- [x] PREVENT-ITH-004 stays green (no `node:http`/`net`; `child_process` OK).
+- [x] No `as any` (PREVENT-011); typed `AgentToolResult<DispatchDetails>`.
+- [x] `extensions/ithacus-dispatch.ts` ≤ 300 lines; split if it grows past.
+- [x] Smoke tests cover the dispatch path via the injected `spawnImpl` seam.
 
 ---
 

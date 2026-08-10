@@ -235,14 +235,20 @@ A2A networking lives in extensions/ (Sprint 5.9).
 
 | Sprint | Feature | Key files | Status |
 |---|---|---|---|
-| 5.1 | Priority work queue + task lifecycle store | `src/queue.ts`, upgrade `team.ts` | ⬜ |
-| 5.2 | DAG step control + rich step types + YAML | upgrade `workflow.ts`, `src/workflow-yaml.ts` | ⬜ |
-| 5.3 | Inter-agent negotiation + handoff | `src/negotiation.ts`, `src/handoff.ts` | ⬜ |
-| 5.4 | Swarm dispatch + synthesis + hive FS | `src/swarm.ts`, `src/synthesis.ts` | ⬜ |
+| 5.1 | Priority work queue + task lifecycle store | `src/queue.ts`, `src/task-store.ts` | ✅ Delivered (`types-sprint-5.1.ts`) |
+| 5.2 | DAG step control + rich step types + YAML | `src/workflow-steps.ts`, `src/workflow-yaml.ts` | ✅ Delivered (`types-sprint-5.2.ts`) |
+| 5.3 | Inter-agent negotiation + handoff | `src/negotiation.ts`, `src/handoff.ts` | ✅ Delivered (`types-sprint-5.3.ts`) |
+| 5.4 | Swarm dispatch + synthesis + hive FS | `src/swarm.ts`, `src/synthesis.ts`, `src/store-swarm.ts` | ✅ Delivered (`types-sprint-5.4.ts`) |
 | 5.5 | Budget governor + leader election + router | `src/budget.ts`, `src/leader.ts`, `src/router.ts` | ⬜ |
 | 5.6 | In-process messaging bus + recovery | `src/bus.ts`, `src/recovery.ts` | ⬜ |
 | 5.7 | Distributed claiming + deadline queue | `src/claiming.ts`, upgrade `queue.ts` | ⬜ |
 | 5.8 | SprintTracker + 52-week planning | `src/sprint-tracker.ts`, upgrade `scheduler.ts` | ⬜ |
-| 5.9 | A2A protocol adapter (extensions/) | `extensions/ithacus-a2a.ts` | ⬜ |
+| 5.9 | A2A protocol adapter (extensions/) | `extensions/ithacus-a2a.ts` | ⬜ (next — port approved from memory-mcp review) |
+| 5.10 | Dispatch tool migration (registerTool + markdown agents) | `extensions/ithacus-dispatch.ts`, `extensions/agents/*.md`, `src/provider-resolver.ts` | ✅ Delivered v0.3.0 |
+| 5.11 | TUI status overlay + version widget + bump notice | `extensions/ithacus-menu.ts`, `ithacus-widget.ts`, `ithacus-version.ts` | ✅ Delivered v0.3.1/0.3.2 |
+| 5.12 | Local web dashboard | `extensions/ithacus-dashboard-server.ts` (planned) | ⬜ (`dashboard.json` snapshot writer shipped) |
 
-See: docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md for the full gap matrix.
+See: docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md for the full gap matrix. Post-review
+(2026-05, docs sweep): memory-mcp ports queued — agent visibility, inter-agent
+mailbox on `ith_inbox`, tech-stack guardrails injection, ToolVisibility tiers,
+typed workflow engine, opt-in A2A.

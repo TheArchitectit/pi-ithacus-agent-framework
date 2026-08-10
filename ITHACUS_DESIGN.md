@@ -5,13 +5,11 @@
 > *patterns* (not code) from two references:
 >   - **claw-code PR #3250** — team orchestration, `subagentModel` resolution,
 >     parallel read-only tool execution, model-resolution fallthrough.
->   - **pi-mega-compact** — the `.pi/<name>` folder convention, a single local
->     `node:sqlite` store as source of truth, zero-network-at-runtime, and the
->     durable-trim "relieve context mid-run" lesson.
+>
+> ithacus is standalone: it does not reuse, embed, or fork any other project.
 >
 > **Naming rule (user-stated): the folder name is the project name.** The repo
-> is `ithacus`; it is a *resident* of `<repo>/.pi/ithacus/`, the same convention
-> `pi-mega-compact` uses for `<repo>/.pi/mega-compact/`. That folder holds
+> is `ithacus`; it is a *resident* of `<repo>/.pi/ithacus/`. That folder holds
 > `ithacus`'s own `sqlite.db`, `events.log`, and `dashboard.json`. `ithacus`
 > owns the folder — it is not a tenant of another extension's store.
 
@@ -21,18 +19,18 @@
 
 | # | principle | source finding |
 |---|-----------|----------------|
-| P1 | The folder `<repo>/.pi/ithacus/` is the project home; bind per-repo via `git rev-parse --show-toplevel`. | mega-compact `repoStateDir()` |
-| P2 | One local `node:sqlite` `DatabaseSync` store is the source of truth. No second process, no remote DB. | mega-compact `sqlite.ts`, PREVENT-PI-004 |
+| P1 | The folder `<repo>/.pi/ithacus/` is the project home; bind per-repo via `git rev-parse --show-toplevel`. | per-repo state-dir convention |
+| P2 | One local `node:sqlite` `DatabaseSync` store is the source of truth. No second process, no remote DB. | PREVENT-ITH-004 |
 | P3 | Orchestrate sub-agents as *plans* (mode presets → role roster) dispatched through pi's native agent runtime — via `pi.registerTool()` + subprocess spawn, **NOT** `pi.callTool()` (phantom API; never existed on `ExtensionAPI`). Spec: [docs/DESIGN_DISPATCH_TOOL.md](docs/DESIGN_DISPATCH_TOOL.md). | PR #3250 `TeamCreate` |
 | P4 | Resolve sub-agent model via `explicit → subagentModel → provider model → default`; `custom/`-qualify for custom-openai. | PR #3250 `resolve_agent_model`, `qualify_for_provider` |
 | P5 | Execute read-only tool calls in parallel, writes sequentially. | PR #3250 `execute_batch` |
 | P6 | Model-call failures (404/not-found) fall through the fallback chain; caller model is primary, fallbacks appended + deduped. | PR #3250 §4 |
-| P7 | Relieve context mid-run (durable trim at settled `agent_end`) so a team run never balloons to the window limit. | mega-compact `agent-handlers.ts` |
-| P8 | Persist decisions as memories; recall them as sub-agent context, scaled by pressure. | mega-compact `memory.ts`, `turn_end` review |
+| P7 | Relieve context mid-run (durable trim at settled `agent_end`) so a team run never balloons to the window limit. | src/trim.ts |
+| P8 | Persist decisions as memories; recall them as sub-agent context, scaled by pressure. | ith_memories + turn_end review |
 | P9 | No external service / no subscription required - runs on local pi + Node built-ins; extension source makes zero network calls at runtime (scan-enforced). Spawned sub-agents call your configured pi providers. | PREVENT-ITH-004 PREVENT-PI-004 |
 | P10 | Never split a toolCall/toolResult pair; never drop below the anchor floor. | PREVENT-PI-001/002/003 |
 | P11 | Ship only via npm (`pi install npm:ithacus`); never `.tgz`/symlink. Folder is tracked so it travels with the repo. | PREVENT-DIST-001 |
-| P12 | Expose a live localhost dashboard showing the team + tokens. | mega-compact `DashboardSnapshot.crew` |
+| P12 | Expose a live localhost dashboard showing the team + tokens. | dashboard.json snapshot + Sprint 5.12 server |
 
 ---
 
@@ -43,7 +41,7 @@ ithacus/                         ← the repo (= the project name)
 ├── package.json                 ← "type":"module", ESM, pi extension manifest
 ├── openclaw.plugin.json         ← pi extension descriptor (pi.extensions)
 ├── tsconfig.json
-├── CLAUDE.md                    ← token-saving + guardrails (mirrors mega-compact)
+├── CLAUDE.md                    ← token-saving + guardrails
 ├── src/                        ← pi-agnostic, fully unit-testable (node --test)
 │   ├── adapt.ts                ← single pi↔engine message adapter
 │   ├── config.ts               ← loadConfig(), per-repo scoping, env flags, pressure helpers
@@ -106,8 +104,8 @@ the watcher.
 
 ## 4. Explicitly out of scope (so the repo stays lean)
 
-- No compression/Trident/dedup engine — that is `pi-mega-compact`'s job; ithacus
-  only borrows the durable-trim *relief* pattern and the folder convention.
+- No compression/Trident/dedup engine — ithacus keeps only the durable-trim
+  *relief* pattern (P7) and the per-repo folder convention (P1).
 - No external service or subscription required (P9); extension source makes zero network calls at runtime. Spawned sub-agents call your configured pi providers.
 - No `.tgz`/symlink distribution (P11).
 - No new state directory — it lives in `.pi/ithacus`.
@@ -130,6 +128,4 @@ the watcher.
 ---
 
 *References: claw-code PR #3250 (`feat(team): team enhancements, subagentModel,
-parallel tool exec`); pi-mega-compact repo (`CLAUDE.md`, `extensions/mega-config.ts`
-`repoStateDir`, `extensions/mega-runtime/state.ts` `bindRepo`,
-`extensions/mega-events/agent-handlers.ts` durable-trim, `src/store/sqlite/schema.ts`).*
+parallel tool exec`).*

@@ -448,6 +448,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 ### Sprint 5.1 — Priority Work Queue + Task Lifecycle Store (2 weeks)
 
+**Status**: ✅ Delivered — `src/queue.ts`, `src/task-store.ts`, `src/types-sprint-5.1.ts`.
+
 **Features**: 4.11 Priority work-queue state machine, 4.12 Task lifecycle store
 
 **Scope**: `src/queue.ts` — priority state machine (P0-P3, INGRESS→NEXT→NOW→DONE/FAILED), per-item `depends_on` gating, `get_ready_items`, `get_items(status)`, dependency resolution. Upgrade `team.ts`: task lifecycle (create/get/update/cancel/list/count) + TaskStore ABC + pluggable impls (SQLite-default).
@@ -457,6 +459,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 **Approval required**: Yes
 
 ### Sprint 5.2 — DAG Step Control + Rich Step Types + YAML (2 weeks)
+
+**Status**: ✅ Delivered — `src/workflow-steps.ts`, `src/workflow-yaml.ts`, `src/types-sprint-5.2.ts`.
 
 **Features**: 4.13 Step retry/timeout/on_error, 4.14 CONDITION/LOOP/HUMAN_REVIEW/SUBWORKFLOW step types, 4.15 YAML workflow templates
 
@@ -468,6 +472,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 ### Sprint 5.3 — Inter-Agent Negotiation + Handoff (1-2 weeks)
 
+**Status**: ✅ Delivered — `src/negotiation.ts`, `src/handoff.ts`, `src/types-sprint-5.3.ts`.
+
 **Features**: 4.16 Negotiation protocol (TaskOffer/Accept/Reject/Counter, ResourceRequest/Grant/Deny), 4.17 Agent handoff (HandoffReason/Priority + capability routing)
 
 **Scope**: `src/negotiation.ts`, `src/handoff.ts`. In-process (zero-network).
@@ -477,6 +483,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 **Approval required**: Yes
 
 ### Sprint 5.4 — Swarm Dispatch Loop + Result Synthesis + Hive FS (2 weeks)
+
+**Status**: ✅ Delivered — `src/swarm.ts`, `src/synthesis.ts`, `src/store-swarm.ts`, `src/types-sprint-5.4.ts`.
 
 **Features**: 4.18 Swarm dispatch (priority-ordered, blocked-wait, checkpoint-every-N), 4.19 Result synthesis (attribution/conflict/scoring), 4.20 Structured WorkflowResult, 4.21 .pi/ithacus/ hive filesystem convention
 
@@ -540,6 +548,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 ### Sprint 5.10 — Dispatch Tool Migration (registerTool + markdown agents) (1 week)
 
+**Status**: ✅ Delivered v0.3.0 — `ithacus-dispatch` tool + 4 markdown agents (`explore`/`plan`/`verification`/`reviewer`) + provider resolution.
+
 **Features**: Replace phantom `pi.callTool()` dispatch with the canonical `pi.registerTool()` + subprocess-spawn pattern from `pi-subagents`.
 
 **Scope**: `extensions/ithacus-dispatch.ts` (new — registers `ithacus-dispatch` tool via `pi.registerTool()`; `execute()` spawns real `pi` subprocesses per agent with `--model` overrides), `extensions/agents/{explore,plan,verification,worker}.md` (new — ithacus role roster as markdown, matching the `pi-subagents` frontmatter convention), `extensions/ithacus-team.ts` + `extensions/ithacus-swarm.ts` (swap `pi.callTool` → local `spawnAgent` helper). Clears the 2 tsc errors left as the honest red flag from the gate-fix pass — no stubs.
@@ -549,6 +559,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 **Approval required**: Yes — architecture decision (dispatch layer re-architecture). Full spec: [DESIGN_DISPATCH_TOOL.md](DESIGN_DISPATCH_TOOL.md).
 
 ### Sprint 5.11 — TUI Status Overlay Menu (1 week)
+
+**Status**: ✅ Delivered v0.3.1/0.3.2 — `/ithacus-menu` overlay + above-editor version widget + update-bump notice.
 
 **Features**: `/ithacus-menu` slash command opens a pi overlay component (`ctx.ui.custom(..., { overlay: true })`) giving a persistent on-screen status surface: package version, live pressure gauge, crew counters (active agents, current turn), context budget (tokens/percent/window), agent roster with model@provider bindings (bundled vs project-override marker), and dashboard snapshot paths (dashboard.json mtime, events.log size). Keys: `r` refresh, `q`/Esc close.
 
@@ -564,7 +576,7 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 **Features**: Optional, user-triggered localhost dashboard server serving the `dashboard.json` snapshot + `events.log` tail as a small read-only HTML page + JSON endpoint. Slash commands: `/ithacus-dashboard` (start/status), `/ithacus-dashboard stop`, `/ithacus-dashboard open` (opens default browser). Port.pid marker in the state dir; stale-runner bounce on version mismatch; version stamped in the runner script at write time.
 
-**Scope**: `extensions/ithacus-dashboard-cmds.ts` (command + lifecycle management), `extensions/ithacus-dashboard-server.ts` (standalone ESM server module, Node built-ins only — loopback HTTP serving the snapshot; compiled dist copy is the canonical launch artifact since `--experimental-strip-types` refuses .ts under node_modules). Adapted from the mega-compact localhost-web-dashboard pattern (strip React build etc. — ithacus keeps zero build assets). Loopback HTTP requires `guardrails-allow PREVENT-ITH-004` annotations on the spawn + probe lines (audited, user-triggered, localhost-only — same as ithacus-dispatch's pi-subprocess exception).
+**Scope**: `extensions/ithacus-dashboard-cmds.ts` (command + lifecycle management), `extensions/ithacus-dashboard-server.ts` (standalone ESM server module, Node built-ins only — loopback HTTP serving the snapshot; compiled dist copy is the canonical launch artifact since `--experimental-strip-types` refuses .ts under node_modules). ithacus keeps zero build assets — plain JSON-over-HTTP serving of the runtime snapshot). Loopback HTTP requires `guardrails-allow PREVENT-ITH-004` annotations on the spawn + probe lines (audited, user-triggered, localhost-only — same as ithacus-dispatch's pi-subprocess exception).
 
 **Dependencies**: Sprint 5.11 (menu links to dashboard state; snapshot writer already in IthRuntime.snapshotIfReady).
 
