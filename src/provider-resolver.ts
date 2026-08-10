@@ -15,7 +15,11 @@
  * spawned with an explicit `--provider <name>`.
  *
  * Resolution precedence:
- *   1. provider-prefixed model (`plexus/foo`) → split, no lookup needed.
+ *   1. provider-prefixed model (`plexus/foo`) where the prefix is a KNOWN
+ *      provider in pi-setup models.json → split, no lookup needed.
+ *      (A `/` inside the model id itself — e.g. `hf:MiniMaxAI/MiniMax-M2` —
+ *      is NOT a provider prefix: the org segment must match a configured
+ *      provider, otherwise the full id is kept and resolution continues.
  *   2. explicit `provider` override (dispatch param).
  *   3. agent frontmatter `provider:` field.
  *   4. scan pi-setup `models.json` for the bare id:
@@ -90,13 +94,25 @@ export function resolveProviderForModel(opts: ResolveProviderOpts): ResolvedProv
   }
 
   // 1. provider-prefixed: "plexus/claude-mythos-5" → provider=plexus, model=...
+  //    VALIDATE the prefix against configured providers: model ids can contain
+  //    "/" themselves (HuggingFace-style "hf:MiniMaxAI/MiniMax-M2", or
+  //    registry-qualified "org/name" ids). Splitting those would misread the
+  //    org segment as a provider ("hf:MiniMaxAI") and shadow the agent's
+  //    frontmatter provider. When piConfig lists no providers we cannot
+  //    validate → keep the legacy unconditional split.
   const slashIdx = raw.indexOf("/");
   if (slashIdx > 0) {
     const provider = raw.slice(0, slashIdx);
     const model = raw.slice(slashIdx + 1);
-    if (provider && model) {
+    const configured = opts.piConfig?.providers ?? {};
+    const canValidate = Object.keys(configured).length > 0;
+    const isKnown = Object.prototype.hasOwnProperty.call(configured, provider);
+    if (provider && model && (isKnown || !canValidate)) {
       return { model, provider, source: "model-prefix" };
     }
+    // Prefix is not a configured provider — the "/" belongs to the model id.
+    // Fall through with `raw` intact so frontmatter provider / models.json
+    // full-id scan can resolve it.
   }
 
   // 2. explicit dispatch param

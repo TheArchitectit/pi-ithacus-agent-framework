@@ -137,6 +137,33 @@ export async function run(ctx) {
   check("resolver.prefix model split", r.model === "claude-mythos-5");
   check("resolver.prefix source", r.source === "model-prefix");
 
+  // 1b. HuggingFace-style id with a slash INSIDE the model id and a frontmatter
+  // provider that IS configured → treat whole string as the model, frontmatter
+  // wins. Regression: hf:MiniMaxAI/MiniMax-M2 was mis-split to provider
+  // "hf:MiniMaxAI" → pi subprocess errored "Unknown provider \"hf:MiniMaxAI\"".
+  const hfCfg = {
+    providers: {
+      plexus: { models: [{ id: "hf:MiniMaxAI/MiniMax-M2" }] },
+      nw: { models: [{ id: "deepseek-v4-flash-flex" }] },
+    },
+    settings: {},
+  };
+  r = resolve({ model: "hf:MiniMaxAI/MiniMax-M2", agentProvider: "plexus", piConfig: hfCfg });
+  check("resolver.hf-id keeps full model", r.model === "hf:MiniMaxAI/MiniMax-M2");
+  check("resolver.hf-id uses frontmatter provider", r.provider === "plexus");
+  check("resolver.hf-id source frontmatter", r.source === "agent-frontmatter");
+
+  // 1c. Same HF id but no frontmatter: pi-setup full-id scan finds the owner.
+  r = resolve({ model: "hf:MiniMaxAI/MiniMax-M2", piConfig: hfCfg });
+  check("resolver.hf-id scan keeps model", r.model === "hf:MiniMaxAI/MiniMax-M2");
+  check("resolver.hf-id scan provider plexus", r.provider === "plexus");
+  check("resolver.hf-id scan source unique", r.source === "pi-setup-unique");
+
+  // 1d. Prefix that IS a configured provider still splits (validated path).
+  r = resolve({ model: "plexus/claude-mythos-5", piConfig: hfCfg });
+  check("resolver.prefix validated split", r.provider === "plexus" && r.model === "claude-mythos-5");
+  check("resolver.prefix validated source", r.source === "model-prefix");
+
   // 2. explicit param overrides scan (bare id + explicit provider)
   r = resolve({ model: "claude-haiku-4-5", explicitProvider: "test" });
   check("resolver.explicit provider", r.provider === "test");
