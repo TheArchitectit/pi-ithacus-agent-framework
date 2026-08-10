@@ -58,6 +58,12 @@ try {
     copyFileSync(join(repoRoot, "extensions", "agents", f), join(agentsDir, f));
   }
 
+  // HERMETIC: discovery resolves project overrides from <process.cwd()>/.pi/
+  // ithacus/agents. chdir into tmpDir (which has no .pi) so a user-installed
+  // .pi/ithacus/agents/ in the host repo cannot shadow the bundled roster
+  // during these checks. chdir back to repoRoot happens in the finally below.
+  process.chdir(tmpDir);
+
   const agentsMod = await import(join(tmpDir, "ithacus-agents.ts"));
   const dispatchMod = await import(join(tmpDir, "ithacus-dispatch.ts"));
 
@@ -175,13 +181,14 @@ try {
   check("spawn.mock success flag unset", mockRes.error === undefined);
 
   // --- mock verifies args built correctly (--model, --tools, --mode json) ---
-  // provider-prefixed model ("custom/gpt-4o") resolves via model-prefix:
-  // the resolver splits it → --model gpt-4o --provider custom.
+  // provider-prefixed model ("custom/gpt-4o" + provider:"custom") resolves
+  // via model-prefix intent-match split → --model gpt-4o --provider custom.
   let recordedArgs = null;
   await dispatchMod.spawnAgent({
     agent: "reviewer",
     task: "review the diff",
     model: "custom/gpt-4o",
+    provider: "custom", // intent match → validated split even when config has providers
     spawnImpl: (_cmd, args, _opts) => {
       recordedArgs = args;
       return makeFakeProc({ stdoutLines: [messageEndEvent("ok")] });
@@ -357,6 +364,7 @@ try {
     console.log("ALL PASSED");
   }
 } finally {
+  process.chdir(repoRoot); // leave tmpDir before removing it (cwd must not be inside)
   // Always clean up the temp dir (under repo root — must not linger).
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 }

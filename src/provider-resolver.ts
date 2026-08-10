@@ -107,12 +107,16 @@ export function resolveProviderForModel(opts: ResolveProviderOpts): ResolvedProv
     const configured = opts.piConfig?.providers ?? {};
     const canValidate = Object.keys(configured).length > 0;
     const isKnown = Object.prototype.hasOwnProperty.call(configured, provider);
-    if (provider && model && (isKnown || !canValidate)) {
+    // "Intent match": the prefix equals the caller's explicit/frontmatter
+    // provider — splitting is unambiguous even when config can't validate it
+    // (keeps the deterministic "custom/gpt-4o + provider:custom → split" path).
+    const intentMatch = provider === opts?.explicitProvider || provider === opts?.agentProvider;
+    if (provider && model && (isKnown || !canValidate || intentMatch)) {
       return { model, provider, source: "model-prefix" };
     }
-    // Prefix is not a configured provider — the "/" belongs to the model id.
-    // Fall through with `raw` intact so frontmatter provider / models.json
-    // full-id scan can resolve it.
+    // Prefix is not a configured provider (and matches no explicit intent) —
+    // the "/" belongs to the model id. Fall through with `raw` intact so
+    // frontmatter provider / models.json full-id scan can resolve it.
   }
 
   // 2. explicit dispatch param
