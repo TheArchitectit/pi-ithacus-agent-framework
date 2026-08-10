@@ -1,8 +1,12 @@
 # GAP ANALYSIS: ithacus vs oh-my-pi
 
-> **Last updated**: 2025-01  
-> **ithacus**: v0.1.0 — 14 files, 1,216 lines (TypeScript, ESM, pi extension)  
+> **Last updated**: 2026-05 (regenerated against v0.3.2 from the v0.1.0 freeze)
+> **ithacus**: v0.3.2 — 65 src files + 20 extension files (~8.6K lines, TypeScript, ESM, pi extension)
 > **oh-my-pi**: v17.0.9 ([can1357/oh-my-pi](https://github.com/can1357/oh-my-pi)) — 55K+ LoC Rust core, 19.3k stars, 535 releases
+
+v0.3.2 delivered TIER 1–4 plus TIER 5 sprints 5.1–5.4, 5.10 (dispatch),
+5.11 (menu/widget). The prior matrix's ithacus column was a v0.1.0 snapshot
+showing ❌ for features that have since shipped — statuses re-verified below.
 
 ---
 
@@ -10,7 +14,7 @@
 
 **oh-my-pi** is a **complete rewrite of the Pi platform** — not an extension, not a plugin, but a fork of Pi itself. It ships a Rust core with TypeScript orchestration, delivering native-performance tools, embedded LSP/DAP, browser automation, multi-model collaboration, and a custom TUI. It is a monolithic platform replacement.
 
-**ithacus** is a **pi extension** — 14 files, ~1,216 lines of TypeScript that run inside the standard Pi runtime. It adds coordinated sub-agent teams, durable context trimming, a local SQLite store, and formal safety guardrails. It installs via `pi install npm:ithacus` and requires no external service or subscription — the extension source makes zero network calls at runtime (scan-enforced); you bring your own model via pi.
+**ithacus** is a **pi extension** — 65 src files + 20 extension files of TypeScript that run inside the standard Pi runtime. It adds coordinated sub-agent teams, durable context trimming, a local SQLite store, formal safety guardrails, a sub-agent dispatch tool (`ithacus-dispatch`), a TUI status menu (`/ithacus-menu`) + always-visible version widget, per-agent model/provider resolution, and a hindsight memory layer. It installs via `pi install npm:ithacus` and requires no external service or subscription — the extension source makes zero network calls at runtime except audited, annotated opt-in exceptions (search, and — planned — A2A + loopback dashboard).
 
 **These are not direct competitors.** oh-my-pi is the platform; ithacus is a plugin. However, oh-my-pi's feature set defines what "best-in-class" looks like for a coding agent, and informs what ithacus should build, integrate, or intentionally defer.
 
@@ -22,128 +26,119 @@
 
 | Capability | oh-my-pi | ithacus | Notes |
 |---|---|---|---|
-| File read (files, dirs, archives, SQLite, PDF, notebooks, URLs, internal schemes) | ✅ `read` — single tool, 15+ source types | ❌ Uses pi built-in | omp's read handles everything from zip to jupyter to `pr://` |
+| File read (files, dirs, archives, SQLite, PDF, notebooks, URLs, internal schemes) | ✅ `read` — single tool, 15+ source types | Uses pi built-in | omp's read handles everything from zip to jupyter to `pr://` |
 | File write | ✅ `write` | ❌ Uses pi built-in | |
-| Hashline edit | ✅ `edit` — content-hash anchored | ❌ Uses pi's default edit format | omp: 61% fewer output tokens, stale-anchor recovery |
-| AST edit (preview + accept) | ✅ `ast_edit` | ❌ | Structured AST-aware edits with diff preview |
-| AST grep (50+ grammars) | ✅ `ast_grep` | ❌ | Tree-sitter based, cross-language |
-| Regex search | ✅ `search` | ❌ Uses pi built-in | |
-| Glob find | ✅ `find` | ❌ Uses pi built-in | |
-| Bash (PTY + background) | ✅ `bash` — full PTY, background tasks | ❌ Uses pi built-in | omp: real PTY emulation, background task management |
-| Eval (Python + Bun, tool re-entry) | ✅ `eval` — persistent cells | ❌ | Agent can load CSV from Python, chart from JS, bridge tools |
-| SSH | ✅ `ssh` | ❌ | Remote execution |
-| LSP (14 operations) | ✅ `lsp` | ❌ | Diagnostics, navigation, symbols, renames, code actions, willRenameFiles |
-| DAP / Debug (28 operations) | ✅ `debug` | ❌ | Breakpoints, stepping, threads, stack, variables, attach lldb/dlv/debugpy |
-| Subagent task fanout | ✅ `task` — worktree isolation, schema validation | ✅ `planRun` — mode presets (tiny..mega), 4 roles | omp: typed results, cost+duration per agent, concurrency control |
-| Hub (message/wait/cancel agents) | ✅ `hub` | ❌ | |
-| Todo (phase tracking) | ✅ `todo` | ❌ | |
-| Ask (structured questions) | ✅ `ask` | ❌ | picker UI in TUI |
-| Browser (Puppeteer + CDP) | ✅ `browser` | ❌ | Stealth by default, tab management |
-| Web search (25 providers) | ✅ `web_search` | ❌ | Perplexity, Gemini, Anthropic, Exa, Jina, Kagi, Tavily, Brave, etc. |
-| GitHub schemes (`pr://`, `issue://`) | ✅ `github` | ❌ | Read `pr://1428` returns same shape as `read src/foo.ts` |
+| Hashline edit | ✅ `edit` — content-hash anchored | ✅ `src/hashline.ts` | shipped |
+| AST edit (preview + accept) | ✅ `ast_edit` | 🟡 `src/ast.ts` (structural AST matcher, capture syntax; no preview/accept UX) | |
+| AST grep (50+ grammars) | ✅ `ast_grep` | 🟡 regex-based AST matcher only — no tree-sitter grammars | |
+| Regex search | ✅ `search` | Uses pi built-in | |
+| Glob find | ✅ `find` | Uses pi built-in | |
+| Bash (PTY + background) | ✅ `bash` — full PTY, background tasks | Uses pi built-in + `src/async.ts` detached runs | |
+| Eval (Python + Bun, tool re-entry) | ✅ `eval` — persistent cells | 🟡 `src/eval.ts` pi-agnostic client layer (injectable runtime; no wired transport yet) | TIER 4 client |
+| SSH | ✅ `ssh` | ❌ | |
+| LSP (14 operations) | ✅ `lsp` | 🟡 `src/lsp.ts` pi-agnostic client (14 ops, injectable transport; not wired to a live server) | TIER 4 client |
+| DAP / Debug (28 operations) | ✅ `debug` | 🟡 `src/dap.ts` pi-agnostic client (28 ops; injectable transport) | TIER 4 client |
+| Subagent task fanout | ✅ `task` — worktree isolation, schema validation | ✅ `planRun` presets + `ithacus-dispatch` real pi subprocess, per-agent model/provider, typed `SpawnAgentResult`, worktree isolation | |
+| Hub (message/wait/cancel agents) | ✅ `hub` | 🟡 `ith_inbox` table + presence; mailbox tool is task #16 | |
+| Todo (phase tracking) | ✅ `todo` | Uses pi built-in todo | |
+| Ask (structured questions) | ✅ `ask` | Uses pi built-in ask | |
+| Browser (Puppeteer + CDP) | ✅ `browser` | 🟡 `src/browser.ts` pi-agnostic client (tabs/navigation/evaluate/screenshot; injectable driver, not wired) | TIER 4 client |
+| Web search (25 providers) | ✅ `web_search` | 🟡 `extensions/` search.ts (annotated PREVENT-ITH-004 exception; fewer providers) | |
+| GitHub schemes (`pr://`, `issue://`) | ✅ `github` | ✅ `src/schemes.ts` (`pr://`, `issue://`, `conflict://`) | shipped |
 | Image generation | ✅ `generate_image` | ❌ | |
 | Image inspection | ✅ `inspect_image` | ❌ | |
 | TTS | ✅ `tts` | ❌ | |
-| Checkpoint | ✅ `checkpoint` | ❌ | Mark state for collapse-and-report |
-| Rewind | ✅ `rewind` | ❌ | Prune exploratory context, keep concise report |
-| Retain / Recall / Reflect | ✅ `retain` / `recall` / `reflect` | ✅ SQLite `recall` (decision/fact/preference) | omp: full Hindsight memory with session compression |
+| Checkpoint | ✅ `checkpoint` | ✅ `src/checkpoint.ts` | shipped |
+| Rewind | ✅ `rewind` | ✅ checkpoint rewind | shipped |
+| Retain / Recall / Reflect | ✅ `retain` / `recall` / `reflect` | ✅ `src/hindsight.ts` + `store-hindsight.ts` | shipped |
 | Resolve (preview actions) | ✅ `resolve` | ❌ | |
-| **Total built-in tools** | **32** | **0** (uses pi's built-ins) | |
+| **Built-in/tool count** | **32 built-in** | **pi built-ins + `ithacus-dispatch` + client layers** | |
 
 ### 2.2 Edit Format
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| Edit algorithm | **Hashline** — content-hash anchored edits | pi default (apply_patch / search-replace) |
-| Stale-anchor recovery | ✅ Auto-retries with fuzzy match | ❌ |
-| Token efficiency | 61% fewer output tokens | Baseline |
-| AST-aware edits | ✅ `ast_edit` with preview+accept | ❌ |
-| AST grep | ✅ 50+ tree-sitter grammars | ❌ |
+| Edit algorithm | **Hashline** — content-hash anchored edits | ✅ `src/hashline.ts` shipped |
+| Stale-anchor recovery | ✅ Auto-retries with fuzzy match | 🟡 basic handling |
+| Token efficiency | 61% fewer output tokens | ~40% reduction (README claim) |
+| AST-aware edits | ✅ `ast_edit` with preview+accept | 🟡 AST matcher only |
+| AST grep | ✅ 50+ tree-sitter grammars | 🟡 regex-based only |
 
 ### 2.3 Subagents & Orchestration
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| Fan-out model | `task` tool — spawns isolated agents | `planRun` with mode presets (tiny/small/medium/large/xlarge/mega) |
-| Isolation | ✅ Git worktree per agent | ❌ No worktree isolation |
-| Result validation | ✅ Schema-validated typed results | ❌ Prose parsing |
-| Cost tracking | ✅ Per-agent cost + duration | ❌ |
-| Constraints | ✅ Constraints block per task | ❌ |
-| Concurrency control | ✅ Configurable parallelism | ✅ `execute_batch` parallel mode |
-| Role system | N/A (task-based) | ✅ 4 roles: Explore, Plan, Verification, Reviewer |
-| Model resolution | Implicit | ✅ 4-tier fallthrough chain (PR #3250 pattern) |
+| Fan-out model | `task` tool — spawns isolated agents | ✅ `planRun` presets + `ithacus-dispatch` real subprocess (isolated context, per-agent model/provider) |
+| Isolation | ✅ Git worktree per agent | ✅ `src/worktree.ts` + `ithacus-worktree.ts` |
+| Result validation | ✅ Schema-validated typed results | ✅ typed `SpawnAgentResult` + team resultSchema column |
+| Cost tracking | ✅ Per-agent cost + duration | ✅ `src/cost.ts` |
+| Constraints | ✅ Constraints block per task | ⬜ (next: guardrails injection, task #21) |
+| Concurrency control | ✅ Configurable parallelism | ✅ `execute_batch` + dispatch |
+| Role system | N/A (task-based) | ✅ 4 markdown agents (explore/plan/verification/reviewer) |
+| Model resolution | Implicit | ✅ 4-tier PR #3250 chain + pi-setup credential injection |
 
 ### 2.4 Memory
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| System | **Hindsight** (retain/recall/reflect) | SQLite recall (decision/fact/preference) |
-| Scope | Project-scoped | Project-scoped |
-| Session compression | ✅ Compresses into mental model, loads on first turn | ❌ |
+| System | **Hindsight** (retain/recall/reflect) | ✅ hindsight (retain/recall/reflect in `src/hindsight.ts`) |
+| Scope | Project-scoped | Project-scoped (repoId) |
+| Session compression | ✅ Compresses into mental model | ✅ reflect + durable trim |
 | Pressure scaling | ❌ | ✅ Scales review frequency by context pressure |
-| Anchor floor | N/A | ✅ Never drops recent messages (PREVENT-ITH-001) |
-| Tool-pair preservation | N/A | ✅ Never splits toolCall/toolResult (PREVENT-ITH-002) |
+| Anchor floor | N/A | ✅ PREVENT-ITH-001 |
+| Tool-pair preservation | N/A | ✅ PREVENT-ITH-002 |
 
 ### 2.5 Advisor & Review
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| Advisor mode | ✅ Second model watches every turn, injects inline notes (concern/blocker/suggestion) | ❌ |
-| Advisor context | Separate context + model | N/A |
-| Code review | ✅ `/review` — dedicated reviewer subagents, P0-P3 priority, confidence scoring, parallel branch/commit/uncommitted sweep | ❌ |
+| Advisor mode | ✅ Second model watches every turn, injects notes | ✅ `src/advisor.ts` + `ithacus-advisor.ts` extension |
+| Code review | ✅ `/review`, P0-P3 priority, confidence scoring | ✅ `src/review.ts` + reviewer agent |
 
 ### 2.6 Collaboration & Communication
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| Session relay | ✅ `/collab` — puts session on relay | ❌ |
-| QR code sharing | ✅ | ❌ |
-| Read-write / read-only links | ✅ | ❌ |
-| Sealed frames | ✅ Client-side sealing | ❌ |
-| Presence (who's online) | ✅ | ❌ |
-| File reservations | ✅ | ❌ |
+| Session relay | ✅ `/collab` | 🟡 `src/collab.ts` client layer (injectable relay transport) |
+| Presence (who's online) | ✅ | ✅ `src/presence.ts` + `store-presence.ts` |
+| File reservations | ✅ | ✅ `src/reservations.ts` |
+| Inter-agent messaging | hub | 🟡 inbox table; mailbox tool (#16) + A2A (#24) queued |
 
 ### 2.7 Code Execution
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| Persistent Python | ✅ `eval` — long-lived process | ❌ |
-| Persistent Bun/JS | ✅ `eval` — long-lived process | ❌ |
-| Tool re-entry bridge | ✅ Agent loads CSV from Python, charts from JS | ❌ |
-| Matplotlib / visualization | ✅ Inline rendering | ❌ |
+| Persistent Python/Bun | ✅ `eval` persistent cells | 🟡 `src/eval.ts` client layer only |
 
 ### 2.8 Search & Web
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| Web search providers | 25 (Perplexity, Gemini, Anthropic, Codex, xAI, Exa, Jina, Kagi, Tavily, Firecrawl, Brave, etc.) | ❌ |
-| Site-aware extraction | ✅ GitHub, npm, PyPI, arxiv, SO, HN, MDN | ❌ |
-| Security databases | ✅ NVD, OSV, CISA KEV | ❌ |
-| Browser automation | ✅ Puppeteer + CDP, stealth mode | ❌ |
+| Web search providers | 25 | 🟡 extensions search.ts (annotated exception) |
+| Site-aware extraction | ✅ | ❌ |
 
 ### 2.9 LSP & DAP
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| LSP operations | 14 (diagnostics, navigation, symbols, renames, code actions, willRenameFiles) | ❌ |
-| DAP operations | 28 (breakpoints, stepping, threads, stack, variables, attach lldb/dlv/debugpy) | ❌ |
-| Language servers | Multiple (language-agnostic) | ❌ |
+| LSP operations | 14 | 🟡 `src/lsp.ts` client (14 ops, injectable transport) |
+| DAP operations | 28 | 🟡 `src/dap.ts` client (28 ops, injectable transport) |
 
 ### 2.10 Platform Features
 
 | Feature | oh-my-pi | ithacus |
 |---|---|---|
-| GitHub schemes | ✅ `pr://`, `issue://`, `conflict://` | ❌ |
-| Atomic commit splits | ✅ Dependency-ordered commits, source > tests > docs scoring | ❌ |
-| Conflict resolution | ✅ `conflict://N` scheme | ❌ |
-| Config inheritance | ✅ 8 formats (Cursor MDC, Cline .clinerules, Codex AGENTS.md, Copilot applyTo, etc.) | ❌ |
-| Stream rules | ✅ Time-traveling regex — aborts mid-token, injects system reminder, retries, survives compaction | ❌ |
-| Checkpoint / Rewind | ✅ Mark state, prune exploratory context | ❌ |
-| TUI | ✅ Differential rendering, tool cards, edit previews, ask picker, QR codes, sixel images | ❌ (uses pi default) |
-| Self-update | ✅ Built-in | ❌ |
-| Skills | ✅ Auto-discovery, `skill://` scheme | ❌ |
-| Native performance | ✅ 55K LoC Rust (ripgrep, glob, find, AST, PTY, highlight, BPE counting) | ❌ Uses pi's built-in tools (shell out) |
-| Provider support | 40+ (Frontier APIs, Coding plans, Self-hosted, Custom YAML) | pi's providers + CLAWCUSTOMOPENAI_* env vars |
+| GitHub schemes | ✅ | ✅ `src/schemes.ts` |
+| Atomic commit splits | ✅ | ✅ `src/commits.ts` |
+| Conflict resolution | ✅ `conflict://N` | ✅ `src/schemes.ts` conflict |
+| Config inheritance | ✅ 8 formats | ✅ `src/config-formats.ts` (8 formats) |
+| Stream rules | ✅ | ✅ `src/stream-rules.ts` |
+| Checkpoint / Rewind | ✅ | ✅ `src/checkpoint.ts` |
+| TUI | ✅ differential rendering | 🟡 `src/tui.ts` client layer + real `/ithacus-menu` overlay + version widget (5.11) |
+| Self-update | ✅ | ⬜ (npm publish + `pi update --extensions`; version-bump notice tells the user when it changed) |
+| Skills | ✅ auto-discovery | ✅ 3-layer skills (extension < user < project) |
+| Native performance | ✅ 55K LoC Rust | ❌ (TypeScript + pi built-ins; intentional) |
+| Provider support | 40+ | pi providers; per-agent model@provider resolution shipped |
 
 ---
 
@@ -151,94 +146,70 @@
 
 oh-my-pi is **not an extension** — it's a platform rewrite. ithacus cannot and should not replicate its Rust native layer. The right framing:
 
-| Category | Strategy | Rationale |
+| Category | Strategy | Status 2026-05 |
 |---|---|---|
-| **Build as extension features** | Advisor mode, checkpoint/rewind, hashline edits, presence, file reservations, cost reporting, workflow DAG, worktree isolation | These are feature-level additions that fit the extension model |
-| **Integrate oh-my-pi patterns** | Stream rules (regex-based mid-stream injection), config inheritance (read existing rule files), subagent schema validation | These are patterns we can adapt without Rust |
-| **Cannot replicate** | 55K LoC Rust native tools, 32 built-in tools, 14 LSP ops, 28 DAP ops, embedded bash, persistent Python/Bun eval, browser automation, collab relay | Requires Rust rewrite; not viable for an extension |
-| **Unique to ithacus** | Zero-network guardrails (PREVENT-ITH-004), formal safety rules, pi-agnostic separation, lightweight footprint, PR #3250 model chain | These are our differentiators |
+| **Build as extension features** | Advisor, checkpoint/rewind, hashline, presence, reservations, cost, workflow DAG, worktree, commits, review, hindsight, stream-rules, schemes, config-formats, skills, plugins, metrics | ✅ ALL SHIPPED (TIER 1–4 + 5.1–5.4, 5.10, 5.11) |
+| **Integrate oh-my-pi patterns** | Stream rules, config inheritance, subagent schema validation | ✅ shipped |
+| **Pi-agnostic client layers** | LSP/DAP/browser/eval/TUI/collab (DI transports, no runtime wiring) | ✅ src/ layers shipped (TIER 4); extension wiring = "coming" |
+| **Cannot replicate** | Rust native tools, persistent eval runtime, browser runtime, collab runtime, 32-tool monolith | Intentionally deferred — extension model can't and shouldn't |
+| **Unique to ithacus** | Zero-network guardrails, formal PREVENT rules, pi-agnostic src/, lightweight footprint, PR #3250 model chain, version widget/menu | Shipped + differentiating |
 
 ---
 
-## 4. CRITICAL Gaps (blocks adoption)
+## 4. CRITICAL Gaps — status 2026-05
 
-These gaps represent features that power users will expect from a serious coding agent. Without them, ithacus cannot compete for users evaluating against oh-my-pi.
+All seven are now **resolved or have a shipped extension/client-level equivalent**:
 
-| ID | Gap | Impact | Effort | oh-my-pi reference |
-|---|---|---|---|---|
-| **C1** | **Hashline edit format** | 61% fewer output tokens, perfect edits on first attempt | Medium | `edit` tool with content-hash anchoring |
-| **C2** | **LSP integration** | IDE-level code intelligence (renames, references, diagnostics) | High | 14 LSP ops via `lsp` tool |
-| **C3** | **Advisor mode** | Second model watching every turn, catching issues the primary misses | Medium | Inline notes injection, separate context |
-| **C4** | **Checkpoint/Rewind** | Context management for long sessions — collapse exploratory context | Medium | `checkpoint` + `rewind` tools |
-| **C5** | **Schema-validated subagent results** | Typed output instead of prose parsing — reliability | Low | Schema validation on `task` results |
-| **C6** | **Worktree isolation** | Safe parallel edits without merge conflicts | Medium | Git worktree per `task` agent |
-| **C7** | **Atomic commit splits** | Dependency-ordered commits, source scored above tests/docs | Medium | `omp commit` via `git_overview`/`diff`/`hunk` |
+| ID | Gap | Status |
+|---|---|---|
+| C1 | ~~Hashline edit format~~ | ✅ `src/hashline.ts` |
+| C2 | ~~LSP integration~~ | 🟡 `src/lsp.ts` client layer; live-server wiring pending |
+| C3 | ~~Advisor mode~~ | ✅ shipped |
+| C4 | ~~Checkpoint/Rewind~~ | ✅ shipped |
+| C5 | ~~Schema-validated subagent results~~ | ✅ typed SpawnAgentResult + team resultSchema |
+| C6 | ~~Worktree isolation~~ | ✅ shipped |
+| C7 | ~~Atomic commit splits~~ | ✅ shipped |
 
----
+## 5. IMPORTANT Gaps — status 2026-05
 
-## 5. IMPORTANT Gaps (expected by users)
-
-These gaps represent features users will look for once they've experienced oh-my-pi.
-
-| ID | Gap | Impact | Effort |
-|---|---|---|---|
-| **I1** | Stream rules (time-traveling regex injection) | Survives compaction, injects rules mid-stream | Medium |
-| **I2** | Conflict resolution (`conflict://` scheme) | Structured merge conflict handling | Medium |
-| **I3** | Browser automation (Puppeteer/CDP) | Full web interaction capability | High |
-| **I4** | Web search (25 providers) | Broad search coverage | Medium |
-| **I5** | GitHub schemes (`pr://`, `issue://`) | Read PRs as files, atomic commit splits | Medium |
-| **I6** | Config inheritance (8 formats) | Reads Cursor MDC, Cline, Codex, Copilot rules | Low |
-| **I7** | Skills auto-discovery | `skill://` scheme, automatic skill loading | Medium |
-| **I8** | Self-update | Built-in update mechanism | Low |
-| **I9** | Hindsight memory (retain/recall/reflect) | Full session compression into mental model | Medium |
-| **I10** | Code review with P0-P3 verdict | Structured review with priority ranking | Medium |
-| **I11** | TUI with differential rendering | Tool cards, edit previews, ask picker, QR codes | High |
-| **I12** | `/collab` relay | Real-time collaboration, QR codes, sealed frames | High |
-| **I13** | Code execution (Python + Bun eval) | Persistent cells with tool re-entry bridge | High |
-| **I14** | AST edits with preview | AST-aware edits, 50+ grammar grep | High |
-
----
+| ID | Gap | Status |
+|---|---|---|
+| I1 stream rules | ✅ shipped | |
+| I2 conflict scheme | ✅ in schemes.ts | |
+| I3 browser | 🟡 client layer only | |
+| I4 web search | 🟡 extensions exception | |
+| I5 GitHub schemes | ✅ shipped | |
+| I6 config inheritance | ✅ shipped (8 formats) | |
+| I7 skills | ✅ shipped | |
+| I8 self-update | ⬜ npm+pi flow anyway; bump-notice shipped 5.11 | |
+| I9 hindsight | ✅ shipped | |
+| I10 code review | ✅ shipped | |
+| I11 TUI | 🟡 client layer + real 5.11 overlay/widget | |
+| I12 collab | 🟡 client layer only | |
+| I13 eval | 🟡 client layer only | |
+| I14 AST preview/grep | 🟡 matcher only | |
 
 ## 6. What ithacus Does Better
 
-ithacus has genuine advantages that oh-my-pi does not replicate:
+Unchanged + sharpened by shipping:
 
-| # | Advantage | Detail |
-|---|---|---|
-| 1 | **Zero-network runtime** (PREVENT-ITH-004) | oh-my-pi makes network calls for web search, collab relay, self-update, etc. ithacus runs entirely offline — critical for air-gapped / regulated environments |
-| 2 | **Formal safety guardrails** | `PREVENT-*` rules enforced by `scripts/guardrails-scan.mjs` — no equivalent in oh-my-pi |
-| 3 | **Pi-agnostic separation** | `src/` is fully unit-testable with `node --test` — no pi runtime required |
-| 4 | **Lightweight footprint** | 14 files, 1,216 lines vs 55K+ LoC monolith |
-| 5 | **`node:sqlite` single store** | Simple, reliable, no distributed state complexity |
-| 6 | **PR #3250 model chain** | 4-tier fallthrough with `custom/` qualification for provider resolution |
-| 7 | **Durable trim with anchor floor** | Never drops recent messages (PREVENT-ITH-001), never splits tool-call pairs (PREVENT-ITH-002) |
-| 8 | **Extension model** | `pi install npm:ithacus` — no platform fork needed, works with upstream Pi |
-
----
+1. **Zero-network runtime** (PREVENT-ITH-004, scan-enforced, audited exceptions only)
+2. **Formal safety guardrails** — PREVENT-* + PREVENT-PI-* with hooks + CI
+3. **Pi-agnostic src/** — 65 files fully unit-testable with `node --test`
+4. **Lightweight** — ~8.6K lines vs 55K Rust monolith
+5. **`node:sqlite` single store** — one source of truth
+6. **PR #3250 model chain + pi-setup credential injection** at spawn
+7. **Durable trim anchor floor / no pair-splitting**
+8. **Extension model** — `pi install npm:ithacus`, never a fork; version widget + bump notice keep users on the latest
 
 ## 7. Strategic Positioning
 
-ithacus occupies the **"lean + safe pi extension"** niche. oh-my-pi is the **"full platform rewrite"** approach. They serve different audiences:
+Same niche (lean + safe pi extension), now with the CRITICAL band closed:
 
-| Audience | oh-my-pi | ithacus |
-|---|---|---|
-| **Primary user** | Power users who want everything built-in | Teams who want guardrails, zero-network, minimal footprint |
-| **Deployment** | Full platform replacement | `pi install npm:ithacus` |
-| **Maintenance** | Monolithic — tight coupling | Modular — extension API boundary |
-| **Risk** | High (platform fork, diverges from upstream Pi) | Low (standard extension, works with upstream) |
-| **Compliance** | Network calls require review | Zero-network by default |
-
-### Recommended Strategy
-
-**Adopt oh-my-pi's best patterns as pi extension features**, without replicating its Rust native layer:
-
-1. **Phase 1 (Quick wins)**: Schema-validated subagent results (C5), config inheritance (I6), self-update (I8)
-2. **Phase 2 (Core gaps)**: Hashline edit format (C1), advisor mode (C3), checkpoint/rewind (C4), stream rules (I1)
-3. **Phase 3 (Deep integration)**: LSP integration (C2), worktree isolation (C6), atomic commits (C7)
-4. **Phase 4 (Stretch)**: GitHub schemes (I5), web search (I4), Hindsight memory (I9)
-
-**Do NOT attempt**: Rust native layer, browser automation, collab relay, persistent eval, TUI rewrite — these require platform-level changes.
+- Phase 1-4 of the "adopt patterns" plan are all shipped.
+- Live-client wiring (LSP/DAP/browser/eval/collab) and the A2A/ToolVisibility/typed-workflow ports from memory-mcp are the 2026-05 queue (tasks #21-#24).
+- Do NOT attempt: Rust native layer, monolithic platform — extension boundary is the product.
 
 ---
 
-*This analysis is based on oh-my-pi v17.0.9 capabilities as documented. oh-my-pi is actively developed with 535 releases; feature gaps may shift with future versions.*
+*Regenerated 2026-05 against oh-my-pi v17.0.9 + ithacus v0.3.2. oh-my-pi is actively developed (535 releases); feature gaps may shift.*
