@@ -243,6 +243,9 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
         cwd: opts.cwd ?? process.cwd(),
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
+        // Child identity: mirrors claw-code's CLAWD_AGENT_ID convention so a
+        // spawned agent can identify itself (mailbox addressing, telemetry).
+        env: { ...process.env, ITHACUS_AGENT_ID: agent.name },
       });
       let buffer = "";
 
@@ -380,14 +383,21 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // dispatch in a repo. Only fires when a runtime is wired (entry passes
       // it; the smoke harness calls registerDispatchTool without one).
       if (runtime) maybeShowFirstDispatchNotice(runtime);
-      const res = await spawnAgent({
-        agent: params.agent ?? "explore",
-        task: params.task,
-        model: params.model,
-        provider: params.provider,
-        cwd: params.cwd,
-        signal: signal ?? undefined,
-      });
+      const agentType = params.agent ?? "explore";
+      runtime?.dispatchStarted(agentType);
+      let res;
+      try {
+        res = await spawnAgent({
+          agent: agentType,
+          task: params.task,
+          model: params.model,
+          provider: params.provider,
+          cwd: params.cwd,
+          signal: signal ?? undefined,
+        });
+      } finally {
+        runtime?.dispatchEnded(agentType);
+      }
       return {
         content: [
           { type: "text" as const, text: res.output || res.stderr || "(no output)" },

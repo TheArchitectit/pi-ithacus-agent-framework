@@ -51,9 +51,11 @@ export function buildWidgetLine(runtime: IthRuntime, width: number): string {
   const w = Math.max(10, width > 0 ? width : 120);
   const p = runtime.pressure;
   const crew = `crew ${runtime.activeAgents} · turn ${runtime.currentTurn}`;
+  const running = runtime.runningSummary();
+  const runningSeg = running ? `  |  ${running}` : "";
   const ctxTok = `ctx ${fmtTokens(runtime.lastCtxTokens)}/${fmtTokens(runtime.lastCtxWindow)}`;
   return trunc(
-    `ithacus v${ownVersion()}  |  ${gauge(p)} ${(p * 100).toFixed(0)}%  |  ${crew}  |  ${ctxTok}`,
+    `ithacus v${ownVersion()}  |  ${gauge(p)} ${(p * 100).toFixed(0)}%  |  ${crew}${runningSeg}  |  ${ctxTok}`,
     w,
   );
 }

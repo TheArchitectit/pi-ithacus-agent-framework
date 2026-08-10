@@ -27,6 +27,8 @@ export class IthRuntime {
   // Per-session mutable state (reset on session_start / session_tree).
   sessionId = "global";
   activeAgents = 0;
+  /** Live dispatched sub-agents by type (e.g. explore×2, plan×1); widget-visible. */
+  runningByType = new Map<string, number>();
   currentTurn = 0;
   lastCtxTokens: number | null = null;
   lastCtxPercent: number | null = null;
@@ -80,6 +82,25 @@ export class IthRuntime {
 
   repoId(cwd: string | undefined): string {
     return repoIdFromCwd(cwd);
+  }
+
+  /** Track a dispatched sub-agent starting (widget + menu visibility). */
+  dispatchStarted(agentType: string): void {
+    this.runningByType.set(agentType, (this.runningByType.get(agentType) ?? 0) + 1);
+    this.appendEvent("dispatch_start", { agent: agentType });
+  }
+
+  /** Track a dispatched sub-agent finishing (success or not). */
+  dispatchEnded(agentType: string): void {
+    const n = (this.runningByType.get(agentType) ?? 1) - 1;
+    if (n <= 0) this.runningByType.delete(agentType);
+    else this.runningByType.set(agentType, n);
+    this.appendEvent("dispatch_end", { agent: agentType });
+  }
+
+  /** Compact "explore×2 plan×1" string for the widget/menu, or "" when idle. */
+  runningSummary(): string {
+    return [...this.runningByType.entries()].map(([k, v]) => `${k}×${v}`).join(" ");
   }
 
   /**
