@@ -155,6 +155,15 @@ function extractAssistantText(message: AssistantMessage | undefined): string {
   return text;
 }
 
+/** Format a millisecond duration as a compact human-readable string. */
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return `${m}m${s.toString().padStart(2, "0")}s`;
+}
+
 // ---------------------------------------------------------------------------
 // spawnAgent — the subprocess spawn (replaces pi.callTool at dispatch sites)
 // ---------------------------------------------------------------------------
@@ -423,11 +432,11 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
         // Live visibility (task #25): surface dispatch start + each child event
         // to the parent UI via onUpdate, so the user can SEE what the dispatch
         // is doing + which model while it runs — not just the final output.
-        const header = `[ithacus:${agentType}] task=${params.task.slice(0, 80)}${params.task.length > 80 ? "…" : ""}`;
+        const taskPreview = params.task.slice(0, 80) + (params.task.length > 80 ? "…" : "");
         const emit = (text: string, details: DispatchDetails): void => {
           onUpdate?.({ content: [{ type: "text" as const, text }], details });
         };
-        emit(`${header}\n(spawning sub-agent…)`, {
+        emit(`ithacus · ${agentType}\ntask: ${taskPreview}\n  ⟳ spawning sub-agent…`, {
           agent: agentType, exitCode: -1, durationMs: 0, success: false,
           model: params.model, provider: params.provider,
         });
@@ -439,12 +448,12 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
           cwd: params.cwd,
           signal: signal ?? undefined,
           onProgress: (info) => {
-            const detail = info.model ? ` [${info.model}]` : "";
-            const line = info.phase === "tool" ? `  → tool: ${info.text}`
+            const modelTag = info.model ? ` · ${info.model}` : "";
+            const line = info.phase === "tool" ? `  → ${info.text}`
               : info.phase === "text" ? `  … ${info.text.slice(-200)}`
-              : info.phase === "message_end" ? `  ✓ done${detail}`
+              : info.phase === "message_end" ? `  ✓ done`
               : `  · ${info.phase}`;
-            emit(`${header}${detail ? ` model=${info.model}` : ""}\n${line}`, {
+            emit(`ithacus · ${agentType}${modelTag}\n${line}`, {
               agent: agentType, exitCode: -1, durationMs: 0, success: false,
               model: info.model ?? params.model, provider: params.provider,
             });
@@ -453,14 +462,16 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       } finally {
         runtime?.dispatchEnded(agentType);
       }
-      // Final result: a visible status header (agent/model@provider/duration/
-      // exit) PREPENDED to the child's output — so the parent LLM and any tool
+      // Final result: a visible status header (agent/model/duration/status)
+      // PREPENDED to the child's output — so the parent LLM and any tool
       // result renderer see what actually ran, not just the prose.
-      const mp = res.model ? ` model=${res.model}${res.provider ? `@${res.provider}` : ""}` : "";
-      const status = `[ithacus:${res.agent}]${mp} duration=${res.durationMs}ms exit=${res.exitCode} success=${res.success}`;
+      const modelStr = res.model ? `${res.model}${res.provider ? `@${res.provider}` : ""}` : "default";
+      const dur = fmtDuration(res.durationMs);
+      const statusMark = res.success ? "✓ success" : `✗ failed (exit ${res.exitCode})`;
+      const header = `ithacus · ${res.agent}\nmodel: ${modelStr} · ${dur} · ${statusMark}`;
       return {
         content: [
-          { type: "text" as const, text: `${status}\n\n${res.output || res.stderr || "(no output)"}` },
+          { type: "text" as const, text: `${header}\n\n${res.output || res.stderr || "(no output)"}` },
         ],
         details: {
           agent: res.agent,
