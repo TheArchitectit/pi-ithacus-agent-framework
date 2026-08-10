@@ -548,6 +548,28 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 **Approval required**: Yes — architecture decision (dispatch layer re-architecture). Full spec: [DESIGN_DISPATCH_TOOL.md](DESIGN_DISPATCH_TOOL.md).
 
+### Sprint 5.11 — TUI Status Overlay Menu (1 week)
+
+**Features**: `/ithacus-menu` slash command opens a pi overlay component (`ctx.ui.custom(..., { overlay: true })`) giving a persistent on-screen status surface: package version, live pressure gauge, crew counters (active agents, current turn), context budget (tokens/percent/window), agent roster with model@provider bindings (bundled vs project-override marker), and dashboard snapshot paths (dashboard.json mtime, events.log size). Keys: `r` refresh, `q`/Esc close.
+
+**Scope**: `extensions/ithacus-menu.ts` (new — overlay component implementing pi's `Component` interface structurally: `render(width)`, `handleInput`, `invalidate`), wired in `ithacus.ts`. Closes the disabled-output gap noted in ithacus-commands.ts: slash-command string returns are currently discarded by the registerCmd wrapper, so this overlay is the *first persistently visible status surface*. Local fs reads only (package.json, state dir) — zero network (PREVENT-ITH-004 compliant, no exception needed).
+
+**Dependencies**: None — builds on IthRuntime (already tracks pressure/crew/context) + ithacus-agents roster + ithacus-providers providerSnapshot().
+
+**Approval required**: Yes — first TUI wiring into extensions/ (Sprint 4.3 src/tui.ts is the pi-agnostic base; this is the long-deferred extension-side wiring of gap I5).
+
+---
+
+### Sprint 5.12 — Local Web Dashboard (2-3 weeks)
+
+**Features**: Optional, user-triggered localhost dashboard server serving the `dashboard.json` snapshot + `events.log` tail as a small read-only HTML page + JSON endpoint. Slash commands: `/ithacus-dashboard` (start/status), `/ithacus-dashboard stop`, `/ithacus-dashboard open` (opens default browser). Port.pid marker in the state dir; stale-runner bounce on version mismatch; version stamped in the runner script at write time.
+
+**Scope**: `extensions/ithacus-dashboard-cmds.ts` (command + lifecycle management), `extensions/ithacus-dashboard-server.ts` (standalone ESM server module, Node built-ins only — loopback HTTP serving the snapshot; compiled dist copy is the canonical launch artifact since `--experimental-strip-types` refuses .ts under node_modules). Adapted from the mega-compact localhost-web-dashboard pattern (strip React build etc. — ithacus keeps zero build assets). Loopback HTTP requires `guardrails-allow PREVENT-ITH-004` annotations on the spawn + probe lines (audited, user-triggered, localhost-only — same as ithacus-dispatch's pi-subprocess exception).
+
+**Dependencies**: Sprint 5.11 (menu links to dashboard state; snapshot writer already in IthRuntime.snapshotIfReady).
+
+**Approval required**: Yes — first loopback-HTTP exception annotation (PREVENT-ITH-004) for an optional server.
+
 ---
 
 ## Summary

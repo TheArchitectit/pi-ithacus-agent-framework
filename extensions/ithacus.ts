@@ -15,6 +15,7 @@ import { registerEventHandlers } from "./ithacus-events/register.js";
 import { registerTeamCommands } from "./ithacus-commands.js";
 import { registerDispatchTool } from "./ithacus-dispatch.js";
 import { registerSetupCommand } from "./ithacus-setup.js";
+import { registerMenuCommand } from "./ithacus-menu.js";
 import { maybeShowOnLoadNotice } from "./ithacus-onboarding.js";
 
 export default function (pi: ExtensionAPI) {
@@ -29,6 +30,9 @@ export default function (pi: ExtensionAPI) {
   registerDispatchTool(pi, runtime);
   // `/ithacus-setup`: bind models+providers to roles + scaffold new agents.
   registerSetupCommand(pi);
+  // Sprint 5.11: `/ithacus-menu` — persistent status overlay (version, crew,
+  // agents, dashboard snapshot paths). First extension-side TUI wiring.
+  registerMenuCommand(pi, runtime);
   // On-load notice: welcome if no providers are configured (mirrors pi-setup).
   maybeShowOnLoadNotice();
 }
