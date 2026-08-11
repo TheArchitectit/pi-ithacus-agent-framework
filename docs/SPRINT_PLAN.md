@@ -673,7 +673,7 @@ the overlay (5.13), web dashboard (5.12), richer status (5.14), and fleet view
 all subscribe to ONE stream. Borrowed from radcode's stream protocol.
 
 #### Sprint 5.14: Richer Worker Status State Machine
-**Status**: SPEC COMPLETE. **Doc**: `DESIGN_WORKER_STATUS.md`.
+**Status**: ✅ SHIPPED (v0.6.0) — `src/worker-status.ts` state machine (`mapEventToStatus` + `canTransition` + `classifyFailure`, `node --test` 14/14, smoke-src §28) + live store/card on the 7-state `WorkerStatus` vocabulary + dispatch line detection (trust/permission/ready → richer `agent_status` bus events + flat-fallback phase lines) with classified `WorkerFailureKind`; smoke-ext §3d extended. **Doc**: `DESIGN_WORKER_STATUS.md`.
 Upgrade `AgentStatus` (4 states) to `WorkerStatus` (7 states: spawning,
 trust_required, tool_permission, ready_for_prompt, working, done, failed) +
 `WorkerFailureKind`. Borrowed from claw-code's `WorkerStatus`.

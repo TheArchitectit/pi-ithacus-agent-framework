@@ -11,12 +11,21 @@
  * + readonly width + focused) — no pi-tui type import (PREVENT-ITH-004).
  * All constructor fields are declared explicitly (no parameter properties —
  * the Node strip-only test path rejects them; v0.3.11 lesson). Valid theme
- * colors ONLY: accent/success/error/muted/dim (v0.3.13 lesson) — and the
- * whole render is wrapped so a bad frame degrades to plain text instead of
- * crashing pi (v0.3.12 lesson).
+ * colors ONLY: accent/success/error/muted/dim + warning (Sprint 5.14's
+ * blocked-phase accent — pi's theme exports a `warning` color, verified in
+ * dist/modes/interactive/theme/theme.js), and even then every theme call
+ * goes through tryFg so an invalid color can only drop styling, never
+ * crash pi (v0.3.12/13 lessons).
+ *
+ * Sprint 5.14 (docs/DESIGN_WORKER_STATUS.md §2.3): the status row renders
+ * per-WorkerStatus icon/color — the STATUS_ROW table below IS the spec's
+ * table (◌/🔒/🔑/›/▸/✓/✗); failures append the classified
+ * WorkerFailureKind when it's informative (≠ "unknown").
  */
 
 import { getLive, onLiveChanged, removeLive } from "./ithacus-live.js";
+import type { WorkerStatus } from "../src/events.js";
+import { isTerminalStatus } from "../src/worker-status.js";
 
 // ---------------------------------------------------------------------------
 // helpers (zero-dep — visibleWidth/truncateToWidth stay local; pi-tui's would
@@ -65,6 +74,17 @@ function tryFg(t: ThemeLike, color: string, text: string): string {
 // IthLiveCard — the persistent overlay (DESIGN_LIVE_PROGRESS.md §3.2 skeleton,
 // §4 layout: width 52, em-dash title, padEnd(7) label column, dim borders)
 // ---------------------------------------------------------------------------
+
+/** Sprint 5.14 (DESIGN_WORKER_STATUS.md §2.3's icon/color table, verbatim). */
+const STATUS_ROW: Readonly<Record<WorkerStatus, { icon: string; label: string; color: string }>> = {
+  spawning: { icon: "◌", label: "spawning", color: "muted" },
+  trust_required: { icon: "🔒", label: "awaiting trust", color: "warning" },
+  tool_permission: { icon: "🔑", label: "awaiting permission", color: "warning" },
+  ready_for_prompt: { icon: "›", label: "ready", color: "muted" },
+  working: { icon: "▸", label: "working", color: "accent" },
+  done: { icon: "✓", label: "done", color: "success" },
+  failed: { icon: "✗", label: "failed", color: "error" },
+};
 
 export class IthLiveCard {
   readonly width = 52;
@@ -204,23 +224,27 @@ export class IthLiveCard {
       const emptyRow = (): string => border("│") + " ".repeat(innerW) + border("│");
       const label = (s: string): string => s.padEnd(7);
 
-      // Duration: ticks while running (derived from startedAt), frozen at
-      // the terminal value endLive() computed.
-      const durMs = snap.status === "running" ? Date.now() - snap.startedAt : snap.durationMs;
+      // Duration: ticks on every non-terminal WorkerStatus (spawning,
+      // blocked, working — derived from startedAt), frozen at the terminal
+      // value endLive() computed once the run is done/failed (5.14).
+      const durMs = isTerminalStatus(snap.status) ? snap.durationMs : Date.now() - snap.startedAt;
       const secs = Math.max(0, durMs) / 1000;
       const tpsValue = secs > 0 ? Math.round(snap.tokensOut / secs) : 0;
       const meta = ` · ${fmtDuration(durMs)} · ${tpsValue} tps`;
 
-      // status row (spec §4): running accent / success green / failed red
-      let statusLine: string;
-      if (snap.status === "success") {
-        statusLine = fg("success", "✓ success") + fg("muted", meta);
-      } else if (snap.status === "failed") {
-        const err = snap.error ? ` (${truncateToWidth(snap.error, 18)})` : "";
-        statusLine = fg("error", `✗ failed${err}`) + fg("muted", ` · ${fmtDuration(durMs)}`);
-      } else {
-        statusLine = fg("accent", "⟳ running") + fg("muted", meta);
+      // Status row (DESIGN_WORKER_STATUS.md §2.3): one icon/color per
+      // WorkerStatus. Failures carry the classified WorkerFailureKind when
+      // informative ("unknown" adds nothing) + the truncated error string.
+      const st = STATUS_ROW[snap.status] ?? STATUS_ROW.spawning;
+      let statusText = `${st.icon} ${st.label}`;
+      if (snap.status === "failed") {
+        if (snap.failureKind && snap.failureKind !== "unknown") statusText += ` · ${snap.failureKind}`;
+        if (snap.error) statusText += ` (${truncateToWidth(snap.error, 18)})`;
       }
+      const statusLine =
+        snap.status === "failed"
+          ? fg("error", statusText) + fg("muted", ` · ${fmtDuration(durMs)}`)
+          : fg(st.color, statusText) + fg("muted", meta);
 
       const tokensLine = fg("muted", `${snap.tokensIn} in · ${snap.tokensOut} out`);
       const toolLine = fg(

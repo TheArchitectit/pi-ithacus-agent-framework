@@ -7,8 +7,15 @@
  * One `dispatchId` key per active overlay (a single ithacus-dispatch tool
  * call shows one live card). The store keeps best-effort snapshots for the
  * overlay; the bus carries the typed stream for current + future consumers —
- * 5.14's richer status rows, the 5.12 web dashboard, fleet views (one event
- * stream, many views).
+ * the 5.12 web dashboard, fleet views (one event stream, many views).
+ *
+ * Sprint 5.14 (docs/DESIGN_WORKER_STATUS.md): the snapshot's `status` is the
+ * RICHER WorkerStatus vocabulary (consumed from src/events.ts, not recreated
+ * here). Status moves run through the src/worker-status.ts machine
+ * (canTransition is the progress-validity floor: done/failed absorbing);
+ * dispatch's onProgress maps raw child lines via mapEventToStatus and feeds
+ * the result to setWorkerStatus; endLive classifies failureKind via
+ * classifyFailure instead of the 5.13 "unknown" floor.
  *
  * Zero pi imports, zero deps, zero network (PREVENT-ITH-004). Every listener
  * notify AND every bus publish is wrapped in try/catch — live-progress
@@ -16,8 +23,9 @@
  * enhancement, not the critical path — DESIGN_LIVE_PROGRESS.md §9.3).
  */
 
-import type { IthacusEvent, WorkerFailureKind } from "../src/events.js";
+import type { IthacusEvent, WorkerFailureKind, WorkerStatus } from "../src/events.js";
 import type { IthacusEventBus } from "../src/event-bus.js";
+import { canTransition, classifyFailure, type WorkerFailureSignals } from "../src/worker-status.js";
 
 // ---------------------------------------------------------------------------
 // Public types (DESIGN_LIVE_PROGRESS.md §3.1)
@@ -33,7 +41,9 @@ export interface LiveToolEntry {
 export interface AgentLive {
   agent: string; // "explore" | "plan" | ...
   model?: string;
-  status: "running" | "success" | "failed";
+  /** Sprint 5.14 (spec §3): the WorkerStatus vocabulary — spawning at birth,
+   *  richer phases via setWorkerStatus, terminal via endLive. */
+  status: WorkerStatus;
   currentTool?: string;
   currentToolArgs?: string;
   recentTools: LiveToolEntry[]; // last N (cap RECENT_TOOLS_CAP, ring buffer)
@@ -50,10 +60,10 @@ export interface AgentLive {
    * interface omitted the field — added as an OPTIONAL extension).
    */
   taskPreview?: string;
-  /** Internal (5.13 detection floor): set once the first child event flips
-   *  the bus status to "working" (DESIGN_WORKER_STATUS.md §2.2 — first
-   *  assistant turn / first usage event). Not rendered. */
-  workingAnnounced?: boolean;
+  /** Sprint 5.14 (spec §3): classification from endLive — "unknown" floor
+   *  unless the exit evidence says otherwise (context_window /
+   *  permission_denied / timeout / crash). Undefined on success. */
+  failureKind?: WorkerFailureKind;
 }
 
 /**
@@ -177,13 +187,14 @@ function toolNameOf(event: PiJsonEvent, fallback: string): string {
 /**
  * Register a dispatch in the store (called BEFORE spawnAgent — the overlay
  * shows the run from the very first frame). Publishes run_started +
- * agent_status:"spawning" to the bus.
+ * agent_status:"spawning" to the bus; the snapshot status IS "spawning"
+ * from birth (5.14: the richly-typed vocabulary replaces the 5.13 "running").
  */
 export function startLive(id: string, agent: string, model?: string, taskPreview?: string): void {
   live.set(id, {
     agent,
     model,
-    status: "running",
+    status: "spawning",
     recentTools: [],
     toolCallCount: 0,
     tokensIn: 0,
@@ -199,13 +210,41 @@ export function startLive(id: string, agent: string, model?: string, taskPreview
   notify();
 }
 
-/** First observed child event flips the bus status to "working" (once per
- *  dispatch — DESIGN_WORKER_STATUS.md §2.2's detection floor; 5.14 adds the
- *  richer trust/permission/ready states). */
+/**
+ * The single WorkerStatus transition path (Sprint 5.14 progress validity).
+ * Equality short-circuits (duplicate markers are idempotent); canTransition
+ * is the floor — terminal states are absorbing, so a LATE child event after
+ * endLive can never republish a done/failed run as "working" (a 5.13 race
+ * the announceWorking flag could not prevent). Publishes the accepted
+ * transition as agent_status; returns true when the store actually moved.
+ */
+function advanceStatus(id: string, entry: AgentLive, next: WorkerStatus): boolean {
+  if (entry.status === next) return false;
+  if (!canTransition(entry.status, next)) return false;
+  entry.status = next;
+  publish({ type: "agent_status", runId: id, agentId: entry.agent, status: next, ts: Date.now() });
+  return true;
+}
+
+/** First observed tool/usage event flips the status to "working" — the
+ *  detection floor (DESIGN_WORKER_STATUS.md §2.2) for when dispatch's line
+ *  mapper saw nothing detectable before this. */
 function announceWorking(entry: AgentLive, id: string): void {
-  if (entry.workingAnnounced) return;
-  entry.workingAnnounced = true;
-  publish({ type: "agent_status", runId: id, agentId: entry.agent, status: "working", ts: Date.now() });
+  advanceStatus(id, entry, "working");
+}
+
+/**
+ * Sprint 5.14 (spec §2.2): the adapter entry point for the richer status
+ * machine — dispatch's onProgress calls mapEventToStatus(line, current) and
+ * feeds accepted changes here, so trust_required / tool_permission /
+ * ready_for_prompt flow onto the bus (5.13 only ever emitted
+ * spawning/working) and onto the overlay. Best-effort: no entry → no-op;
+ * invalid/backward transitions are refused by the machine.
+ */
+export function setWorkerStatus(id: string, next: WorkerStatus): void {
+  const entry = live.get(id);
+  if (!entry) return;
+  if (advanceStatus(id, entry, next)) notify();
 }
 
 /**
@@ -296,19 +335,27 @@ export function updateLive(id: string, event: PiJsonEvent, startTime: number): v
 
 /**
  * Flip the snapshot to its terminal state and publish agent_done +
- * run_finished. 5.13 classifies every failure as WorkerFailureKind "unknown";
- * Sprint 5.14 refines (context_window / timeout / crash detection).
+ * run_finished ("exit code 0 → done; non-zero → failed + WorkerFailureKind",
+ * spec §2.2). Sprint 5.14: failureKind comes from classifyFailure() over the
+ * exit evidence `signals` carries + the status the run was in just before
+ * the terminal flip (a run that dies still BLOCKED on a trust/permission
+ * grant is permission_denied, not unknown). Signature is backward-compatible
+ * — omitting `signals` keeps the 5.13 "unknown" floor.
  */
-export function endLive(id: string, success: boolean, error?: string): void {
+export function endLive(id: string, success: boolean, error?: string, signals?: WorkerFailureSignals): void {
   const entry = live.get(id);
   if (!entry) return;
-  entry.status = success ? "success" : "failed";
+  const lastStatus = entry.status; // classify against the pre-terminal status
+  entry.status = success ? "done" : "failed";
   entry.error = error;
   entry.currentTool = undefined;
   entry.currentToolArgs = undefined;
   entry.durationMs = Math.max(0, Date.now() - entry.startedAt);
   const ts = Date.now();
-  const failureKind: WorkerFailureKind | undefined = success ? undefined : "unknown";
+  const failureKind: WorkerFailureKind | undefined = success
+    ? undefined
+    : classifyFailure({ ...(signals ?? {}), lastStatus });
+  entry.failureKind = failureKind;
   if (failureKind) {
     publish({ type: "agent_done", runId: id, agentId: entry.agent, status: "failed", failureKind, ts });
   } else {

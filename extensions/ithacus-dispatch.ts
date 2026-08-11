@@ -15,7 +15,13 @@
  * `--mode json` stream (rawJsonLine → parseJsonlLine → updateLive), flipped
  * terminal via endLive + card.markDone() (3s auto-dismiss). Sprint 5.20
  * seam: the store publishes through the runtime's typed event bus, wired
- * here one time via wireLiveEventBus(runtime.eventBus).
+ * here one time via wireLiveEventBus(runtime.eventBus). Sprint 5.14
+ * (docs/DESIGN_WORKER_STATUS.md §2.2): every raw stream line ALSO runs
+ * through the WorkerStatus machine (mapEventToStatus → setWorkerStatus) so
+ * trust_required / tool_permission / ready_for_prompt reach the store, the
+ * bus, the card, and the flat onUpdate fallback; endLive classifies the
+ * WorkerFailureKind from the exit evidence instead of flooring at
+ * "unknown".
  *
  * Exports:
  *   - re-export: spawnAgent (+ SpawnAgentOpts/SpawnAgentResult types) from
@@ -47,8 +53,11 @@ import {
   endLive,
   parseJsonlLine,
   wireLiveEventBus,
+  getLive,
+  setWorkerStatus,
 } from "./ithacus-live.js";
 import { IthLiveCard } from "./ithacus-live-card.js";
+import { mapEventToStatus } from "../src/worker-status.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
 import { registerToolWithVisibility } from "./ithacus-tool-registry.js";
@@ -195,6 +204,31 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             if (info.rawJsonLine) {
               const event = parseJsonlLine(info.rawJsonLine);
               if (event) updateLive(dispatchId, event, startTime);
+              // Sprint 5.14 (DESIGN_WORKER_STATUS.md §2.2): run every raw
+              // stream line through the pure WorkerStatus machine. Accepted
+              // transitions advance the store + publish the richer
+              // agent_status on the bus; the BLOCKED/ready phases also
+              // mirror into flat onUpdate text so headless runs see WHY a
+              // dispatch is paused (the card reads them from the store).
+              // Best-effort: detection never blocks the happy path.
+              try {
+                const prev = getLive(dispatchId)?.status ?? "spawning";
+                const next = mapEventToStatus(info.rawJsonLine, prev);
+                if (next !== prev) {
+                  setWorkerStatus(dispatchId, next);
+                  const phaseNote =
+                    next === "trust_required" ? "  🔒 blocked: workspace-trust confirmation required"
+                    : next === "tool_permission" ? "  🔑 blocked: tool-permission grant pending"
+                    : next === "ready_for_prompt" ? "  › sub-agent up, prompt queued…"
+                    : null;
+                  if (phaseNote) {
+                    emit(`ithacus — ${agentType}${info.model ? ` · ${info.model}` : ""}\n${phaseNote}`, {
+                      agent: agentType, exitCode: -1, durationMs: 0, success: false,
+                      model: info.model ?? params.model, provider: params.provider,
+                    });
+                  }
+                }
+              } catch { /* status detection is best-effort — the stream wins */ }
             }
             // Flat-text fallback keeps the pre-5.13 visible phases only; the
             // raw "json" pass-through line itself is consumed by the store.
@@ -213,8 +247,14 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       } finally {
         // Sprint 5.13 §3.3 (4): flip the store to its terminal state — the
         // card paints ✓/✗, holds 3s, then auto-dismisses (its dismiss path
-        // calls removeLive, purging the snapshot).
-        endLive(dispatchId, res?.success ?? false, res?.error);
+        // calls removeLive, purging the snapshot). Sprint 5.14: hand the
+        // classifier the exit evidence (exit code + stderr/output tail
+        // slices) so failureKind is real, not the 5.13 "unknown" floor.
+        endLive(dispatchId, res?.success ?? false, res?.error, {
+          exitCode: res?.exitCode,
+          stderrTail: res?.stderr ? res.stderr.slice(-512) : undefined,
+          outputTail: res?.output ? res.output.slice(-512) : undefined,
+        });
         cardRef.current?.markDone();
         runtime?.dispatchEnded(agentType);
       }

@@ -583,11 +583,13 @@ try {
     liveMod.wireLiveEventBus(makeFakeBus(published));
 
     // startLive creates a running entry + publishes run_started + spawning.
+    // NOTE (5.14): AgentLive.status is the WorkerStatus vocabulary —
+    // "spawning" from birth (spec §3), not 5.13's "running".
     const liveId = "smoke-live-1";
     liveMod.startLive(liveId, "explore", "claude-haiku-4-5", "read CLAUDE.md and report back");
     const snap = liveMod.getLive(liveId);
     check("live.startLive creates entry", typeof snap === "object" && snap !== null);
-    check("live.startLive running status", snap?.status === "running");
+    check("live.startLive spawning status", snap?.status === "spawning");
     check("live.startLive agent+model+task",
       snap?.agent === "explore" && snap?.model === "claude-haiku-4-5" &&
       snap?.taskPreview === "read CLAUDE.md and report back");
@@ -613,6 +615,10 @@ try {
     feed({ type: "message_end", message: { role: "assistant", model: "claude-haiku-4-5", usage: { input: 847, output: 412 } } });
     const snap2 = liveMod.getLive(liveId);
     check("live.updateLive counts tool call", snap2?.toolCallCount === 1);
+    // 5.14: the announceWorking floor also advances the STORE status — the
+    // snapshot moves spawning → working on the first tool/usage event even
+    // when no explicit setWorkerStatus ran (no external progress line).
+    check("live.updateLive advances store status to working", snap2?.status === "working");
     check("live.updateLive records file access",
       Array.isArray(snap2?.filesAccessed) && snap2.filesAccessed.includes("src/events.ts"));
     check("live.updateLive tokens (latest-in + accumulated-out)",
@@ -639,18 +645,20 @@ try {
     check("livecard render mentions model", runText.includes("claude-haiku-4-5"));
     check("livecard render mentions task", runText.includes("read CLAUDE.md"));
     check("livecard render mentions tokens", runText.includes("847 in") && runText.includes("412 out"));
-    check("livecard render running identity", runText.includes("ithacus —") && runText.includes("⟳ running"));
+    // 5.14 (spec §2.3): the card's status row is the WorkerStatus icon+label
+    // table — after the feeds above the run is ▸ working (was ⟳ running).
+    check("livecard render running identity", runText.includes("ithacus —") && runText.includes("▸ working"));
 
     // endLive marks terminal + publishes agent_done/run_finished; the card
     // renders the success state; removeLive purges; render degrades plain.
     liveMod.endLive(liveId, true);
     const termSnap = liveMod.getLive(liveId);
-    check("live.endLive terminal status", termSnap?.status === "success");
+    check("live.endLive terminal status", termSnap?.status === "done");
     check("live.endLive freezes duration", typeof termSnap?.durationMs === "number" && termSnap.durationMs >= 0);
     check("live.endLive publishes agent_done + run_finished",
       published.some((e) => e.type === "agent_done" && e.runId === liveId && e.status === "done") &&
       published.some((e) => e.type === "run_finished" && e.runId === liveId && e.status === "done"));
-    check("livecard render at terminal state", card.render(52).join("\n").includes("✓ success"));
+    check("livecard render at terminal state", card.render(52).join("\n").includes("✓ done"));
     card.markDone(); // schedules the 3s auto-dismiss (dispose cancels it below)
     liveMod.removeLive(liveId);
     check("live.removeLive purges entry", liveMod.getLive(liveId) === undefined);
@@ -670,6 +678,69 @@ try {
       published.some((e) => e.type === "agent_done" && e.runId === "smoke-live-2" &&
         e.status === "failed" && e.failureKind === "unknown"));
     liveMod.removeLive("smoke-live-2");
+
+    // ---- Sprint 5.14 (docs/DESIGN_WORKER_STATUS.md): the richer WorkerStatus
+    // vocabulary flows through the SAME store/bus/card seams (no real
+    // subprocess — src/worker-status.ts's line mapping + live.setWorkerStatus
+    // stand in for dispatch's onProgress call, which IS these two lines).
+    {
+      const wsMod = await import(join(repoRoot, "src", "worker-status.ts"));
+      const richerId = "smoke-live-4";
+      liveMod.startLive(richerId, "explore", "claude-haiku-4-5", "probe the repo layout");
+      const step = (line) => {
+        const prev = liveMod.getLive(richerId)?.status ?? "spawning";
+        const next = wsMod.mapEventToStatus(line, prev);
+        if (next !== prev) liveMod.setWorkerStatus(richerId, next);
+        return next;
+      };
+      check("live.5.14 trust-prompt line → trust_required",
+        step("Do you trust the files in this folder?") === "trust_required");
+      check("live.5.14 store holds trust_required", liveMod.getLive(richerId)?.status === "trust_required");
+      // trust_required → tool_permission is a legal forward blocked move
+      check("live.5.14 permission JSON event → tool_permission",
+        step('{"type":"permission_request","tool":"bash"}') === "tool_permission");
+      check("live.5.14 first assistant turn → working",
+        step('{"type":"message_delta","delta":{"content":[{"type":"text","text":"…"}]}}') === "working");
+      check("live.5.14 store holds working", liveMod.getLive(richerId)?.status === "working");
+      // one stream, many views: the bus saw the FULL sequence, in order
+      const seq = published.filter((e) => e.type === "agent_status" && e.runId === richerId).map((e) => e.status);
+      check("live.5.14 bus richer status sequence",
+        JSON.stringify(seq) === JSON.stringify(["spawning", "trust_required", "tool_permission", "working"]));
+      // progress validity: a late trust marker cannot rewind a working worker
+      const back = wsMod.mapEventToStatus("Do you trust the files?", liveMod.getLive(richerId)?.status);
+      check("live.5.14 no backward transition", back === "working");
+      // the card renders the richer rows (icon+label per DESIGN_WORKER_STATUS.md §2.3)
+      const rich = new liveCardMod.IthLiveCard({ fg: (_c, t) => t, bold: (t) => t }, richerId, () => {}, () => {});
+      check("live.5.14 card renders ▸ working", rich.render(52).join("\n").includes("▸ working"));
+      liveMod.setWorkerStatus(richerId, "tool_permission"); // working → tool_permission: the mid-run grant dip
+      check("live.5.14 card renders 🔑 awaiting permission",
+        rich.render(52).join("\n").includes("🔑 awaiting permission"));
+      rich.dispose();
+      // spec §2.2: dies still blocked → permission_denied (not "unknown")
+      liveMod.endLive(richerId, false, "child exited", { exitCode: 1 });
+      const failSnap4 = liveMod.getLive(richerId);
+      check("live.5.14 endLive classifies permission_denied",
+        failSnap4?.status === "failed" && failSnap4?.failureKind === "permission_denied");
+      check("live.5.14 agent_done carries failureKind on the bus",
+        published.some((e) => e.type === "agent_done" && e.runId === richerId && e.failureKind === "permission_denied"));
+      liveMod.removeLive(richerId);
+      // died non-zero before any assistant output → crash
+      liveMod.startLive("smoke-live-5", "plan");
+      liveMod.endLive("smoke-live-5", false, "spawn failed", { exitCode: 1 });
+      check("live.5.14 endLive classifies crash",
+        liveMod.getLive("smoke-live-5")?.failureKind === "crash");
+      liveMod.removeLive("smoke-live-5");
+      // terminal absorbing: a late event can never republish a done run (5.13's
+      // announceWorking could fire stale "working" — advanceStatus refuses it)
+      liveMod.startLive("smoke-live-6", "reviewer");
+      liveMod.endLive("smoke-live-6", true);
+      liveMod.setWorkerStatus("smoke-live-6", "working");
+      liveMod.updateLive("smoke-live-6", { type: "message_end", message: { role: "assistant", usage: { input: 1, output: 1 } } }, Date.now() - 5);
+      check("live.5.14 terminal absorbing (store)", liveMod.getLive("smoke-live-6")?.status === "done");
+      check("live.5.14 terminal absorbing (bus — no post-terminal status events)",
+        !published.some((e) => e.type === "agent_status" && e.runId === "smoke-live-6" && e.status !== "spawning"));
+      liveMod.removeLive("smoke-live-6");
+    }
 
     // registerDispatchTool wires runtime.eventBus into the live store
     // (DESIGN_LIVE_PROGRESS.md §3.3 / DESIGN_EVENT_STREAM.md §2.3 — one event

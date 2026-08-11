@@ -79,6 +79,7 @@ export const mailbox = await import(join(buildDir, 'mailbox.ts'))
 export const toolVisibility = await import(join(buildDir, 'tool-visibility.ts'))
 export const eventsMod = await import(join(buildDir, 'events.ts'))
 export const eventBus = await import(join(buildDir, 'event-bus.ts'))
+export const workerStatus = await import(join(buildDir, 'worker-status.ts'))
 
 export let failures = 0;
 export function check(name, cond) {
