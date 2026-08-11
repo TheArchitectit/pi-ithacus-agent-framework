@@ -584,7 +584,71 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 ---
 
+### Tier 6: Live Visibility, Status, Permissions & Memory (post-v0.3.x)
+
+> Source: three explorer-agent reviews of claw-code, memory-mcp, and radcode
+> (`docs/RESEARCH_EXTERNAL_SOURCES.md`, `docs/SPECS_ROADMAP.md`). Every sprint
+> below is spec'd in its own DESIGN_*.md. Zero external services — borrowed
+> patterns re-implemented on node:sqlite / in-process primitives.
+> **Build order**: 5.13 first (5.20 layered into it), then 5.14, 5.15, 5.17,
+> then 5.16/5.18/5.19 in any order.
+
+#### Sprint 5.13: Live-Progress Overlay
+**Status**: SPEC COMPLETE — next to implement. **Doc**: `DESIGN_LIVE_PROGRESS.md`.
+Builds on Sprint 5.10 (dispatch onProgress) + Sprint 5.11 (Component overlay).
+Fix the black-box dispatch: persistent overlay shown at dispatch START, driven
+per-event from the child's --mode json stream — per-agent real-time status,
+TPS, files accessed, tokens. Replaces the 1-sec terminal-state popup.
+Validated against radcode's stream-event TUI architecture.
+
+#### Sprint 5.20: One Event Stream, Many Views
+**Status**: SPEC COMPLETE — layer INTO Sprint 5.13 from day one. **Doc**: `DESIGN_EVENT_STREAM.md`.
+Single typed event bus (`src/events.ts` + `src/event-bus.ts`, pi-agnostic) so
+the overlay (5.13), web dashboard (5.12), richer status (5.14), and fleet view
+all subscribe to ONE stream. Borrowed from radcode's stream protocol.
+
+#### Sprint 5.14: Richer Worker Status State Machine
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_WORKER_STATUS.md`.
+Upgrade `AgentStatus` (4 states) to `WorkerStatus` (7 states: spawning,
+trust_required, tool_permission, ready_for_prompt, working, done, failed) +
+`WorkerFailureKind`. Borrowed from claw-code's `WorkerStatus`.
+
+#### Sprint 5.15: Agent Permission Modes
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_PERMISSION_MODES.md`.
+Per-agent `PermissionMode` (read_only / workspace_write / full_access) declared
+in frontmatter, enforced at spawn via child `--tools` allowlist; deny wins.
+Adds the `writer` agent. Borrowed from claw-code's `AgentsPermissionArg`.
+
+#### Sprint 5.17: Auto-Compact + Retry on Context-Window Errors
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_AUTO_COMPACT_RETRY.md`.
+Detect context-window failure, rebuild a compacted continuation, respawn a
+FRESH child (never reuse the failed session — fixes claw-code PR #4's bug).
+Borrowed from claw-code PRs #1-4.
+
+#### Sprint 5.16: Session Checkpoint Manager
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_CHECKPOINT_MANAGER.md`.
+Checkpoint list/delete/archive/compare on sqlite + `/ithacus-checkpoints`
+overlay. Builds on Sprint 2.1 primitives. Borrowed from memory-mcp session
+context (patterns only — no Postgres).
+
+#### Sprint 5.18: Memory Consolidation
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_MEMORY_CONSOLIDATION.md`.
+Supersede → collapse → cluster pipeline on `ith_memories`, in-process
+token-overlap scoring (no embeddings/vector DB). Borrowed from memory-mcp
+Trident (concept only).
+
+#### Sprint 5.19: Named Teams + Scheduled Crons
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_TEAMS_CRONS.md`.
+Named `TeamRegistry` + cron-bound team schedules + `/ithacus-teams` overlay,
+reusing Sprint 4.5 scheduler + Sprint 2.4 async-run path. Borrowed from
+claw-code Team/CronRegistry.
+
+---
+
 ## Summary
+
+> Note: per-tier counts for Tiers 1-5 predate Sprints 5.5-5.12; the
+> TIER 6 row above is the authoritative estimate for the new sprints.
 
 | Tier | Sprints | Weeks | Files Added | Lines Added | Cumulative |
 |---|---|---|---|---|---|
@@ -593,7 +657,8 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 | TIER 3 (v0.4.0) | 2 sprints | 4 weeks | +6 | +1,500 | 34 files, 5,500 lines |
 | TIER 4 (v1.0+) | 5 sprints | 36-48 weeks | +4 | +1,500 | ~38 files, ~7,000 lines |
 | TIER 5 (v1.1+) | 9 sprints | 10-14 weeks | +10 | +2,000 | ~62 files, ~7,700 lines |
-| **Total** | **23 sprints** | **64-80 weeks** | **+36** | **+8,250** | **~62 files, ~7,700 lines** |
+| TIER 6 (post-v0.3.x) | 8 sprints | 8-10 weeks | +8 | +1,400 | ~14 files, ~1,900 lines |
+| **Total** | **31 sprints** | **72-90 weeks** | **+44** | **+9,650** | **~76 files, ~9,600 lines** |
 
 ---
 

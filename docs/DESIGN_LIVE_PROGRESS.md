@@ -1,7 +1,20 @@
 # Design: ithacus Live-Progress Overlay
 
-> **Status**: DRAFT — pending implementation (post-v0.3.15).
-> **Sprint**: Sprint 5.13 (proposed) — Live-Progress Overlay.
+> **Status**: Spec complete — ready to implement as Sprint 5.13.
+> **Sprint**: Sprint 5.13 — Live-Progress Overlay.
+> **Validated by**: `/mnt/data/git/RADOPENCODE/` (radcode) — its TUI renders
+> live progress by subscribing to a typed engine event stream
+> (text_delta / tool_execution_start / tool_execution_end / usage) and
+> re-rendering per event. That is exactly this spec's architecture: overlay
+> shown at dispatch START, driven per event. File-access tracking comes free
+> from tool-call events carrying file paths.
+> **Reference pattern**: `~/.pi/agent/npm/node_modules/pi-messenger/` —
+> live-progress.ts + overlay.ts + config-overlay.ts (closest shipped pi
+> extension doing this; studied, not copied).
+> **Forward-compatible with**: Sprint 5.20 (one event stream, many views) —
+> the live-progress store is event-driven from day one (publish/subscribe
+> listeners) so the web dashboard (5.12) and richer status (5.14) can
+> subscribe to the same events later without redesign.
 > **Depends on**: Sprint 5.10 (dispatch tool ✅), Sprint 5.11 (menu overlay ✅).
 > **Mission fit**: "different agents with different models to do task work" —
 > the user must be able to SEE each agent's real-time activity, not just the
@@ -426,3 +439,21 @@ tool) + Sprint 5.11 (menu overlay — the Component pattern reference).
 
 **Estimate**: 1 week. Three new files, one edited file, one small spawnAgent
 change. No `src/` changes. No new deps.
+
+## 11. Decisions confirmed by external exploration
+
+Three explorer agents reviewed external sources before this spec was frozen
+(findings: `docs/RESEARCH_EXTERNAL_SOURCES.md`). Confirmations relevant here:
+
+| Decision | Confirmed by |
+|---|---|
+| Overlay shown at dispatch START, driven per-event (not popup after) | radcode's stream-event TUI; pi-messenger's persistent overlay |
+| Parse child stdout as JSONL events (tool_execution_start/end, message_end usage) | pi-messenger `--mode json`; radcode's typed stream events |
+| Track files accessed per agent | Free from tool-call events carrying file paths (radcode); neither claw-code nor memory-mcp has it — differentiator |
+| Track TPS | Derived from `message_end` usage totals + duration; unique to ithacus among reviewed sources |
+| Module-level store + listeners (not React state at the tool) | pi-messenger pattern; also the foundation Sprint 5.20's event bus grows out of |
+| No external services | PREVENT-ITH-004; all borrowable patterns above are zero-network |
+
+**Anti-patterns avoided** (from memory-mcp): never stub the dispatch loop
+(their `dispatch_swarm` is a no-op that marks COMPLETED without dispatching);
+never show a score without documented semantics.
