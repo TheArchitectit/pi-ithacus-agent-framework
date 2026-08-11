@@ -659,7 +659,7 @@ arbitrary names team composition roles/slots.
 > then 5.16/5.18/5.19 in any order.
 
 #### Sprint 5.13: Live-Progress Overlay
-**Status**: SPEC COMPLETE — next to implement. **Doc**: `DESIGN_LIVE_PROGRESS.md`.
+**Status**: ✅ SHIPPED (v0.5.0) — event-bus primitives (`src/events.ts` + `src/event-bus.ts`, `node --test` 9/9, smoke-src §27) + spawn extraction (`ithacus-spawn.ts` rawJsonLine pass-through) + live store/card wired into the dispatch execute() path; smoke-ext §3d added. **Doc**: `DESIGN_LIVE_PROGRESS.md`.
 Builds on Sprint 5.10 (dispatch onProgress) + Sprint 5.11 (Component overlay).
 Fix the black-box dispatch: persistent overlay shown at dispatch START, driven
 per-event from the child's --mode json stream — per-agent real-time status,

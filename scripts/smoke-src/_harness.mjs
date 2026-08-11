@@ -77,6 +77,8 @@ export const { PlanSynthesizer, createPlanSynthesizer, PlanRunner, createPlanRun
 export const resolver = await import(join(buildDir, 'provider-resolver.ts'))
 export const mailbox = await import(join(buildDir, 'mailbox.ts'))
 export const toolVisibility = await import(join(buildDir, 'tool-visibility.ts'))
+export const eventsMod = await import(join(buildDir, 'events.ts'))
+export const eventBus = await import(join(buildDir, 'event-bus.ts'))
 
 export let failures = 0;
 export function check(name, cond) {

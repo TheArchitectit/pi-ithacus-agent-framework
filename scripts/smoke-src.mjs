@@ -26,6 +26,7 @@ import * as s23 from "./smoke-src/23-swarm-store-persistence.mjs";
 import * as s24 from "./smoke-src/24-plan-synthesis-dispatch.mjs";
 import * as s25 from "./smoke-src/25-mailbox.mjs";
 import * as s26 from "./smoke-src/26-tool-visibility.mjs";
+import * as s27 from "./smoke-src/27-event-bus.mjs";
 
 import { failures, buildDir, tmpRepo } from "./smoke-src/_harness.mjs";
 import { rmSync } from "node:fs";
@@ -59,6 +60,7 @@ try {
   await s24.run(ctx);
   await s25.run(ctx);
   await s26.run(ctx);
+  await s27.run(ctx);
 } finally {
   try { ctx.store?.close(); } catch {}
 }

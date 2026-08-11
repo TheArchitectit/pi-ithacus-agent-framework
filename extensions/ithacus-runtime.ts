@@ -4,7 +4,8 @@
  * Lifts the per-session mutable state into a class so the event/command/team
  * modules share it without re-declaring it (mirrors mega-compact MegaRuntime).
  * Owns: the IthStore (rebound per-repo via bindRepo), the active crew counters,
- * and the localhost dashboard snapshot writer.
+ * the singleton typed event bus (Sprint 5.13/5.20 seam), and the localhost
+ * dashboard snapshot writer.
  *
  * This module imports pi runtime types (ExtensionContext) — it is the adapter
  * layer, NOT pi-agnostic. Keep framework logic in src/.
@@ -17,12 +18,20 @@ import { IthStore, repoIdFromCwd } from "../src/store.js";
 import { repoStateDir, STATE_DIR_DEFAULT, type IthacusConfig } from "../src/config.js";
 import { resolveRepoRoot } from "../src/config.js";
 import { currentPressure } from "../src/trim.js";
+import { createEventBus, type IthacusEventBus } from "../src/event-bus.js";
 
 export class IthRuntime {
   config: IthacusConfig;
   store: IthStore;
   activeRepoRoot: string | null = null;
   currentStateDir: string;
+
+  /** Sprint 5.13/5.20 seam (docs/DESIGN_EVENT_STREAM.md §2.2): the singleton
+   *  typed event bus — the live-progress store publishes every update here;
+   *  future views (5.12 dashboard, 5.14 status, fleet) subscribe to the same
+   *  stream. registerDispatchTool wires it into ithacus-live via
+   *  wireLiveEventBus(runtime.eventBus). */
+  readonly eventBus: IthacusEventBus = createEventBus();
 
   // Per-session mutable state (reset on session_start / session_tree).
   sessionId = "global";

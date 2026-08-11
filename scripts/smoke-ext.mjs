@@ -27,6 +27,12 @@
 // writer bind → project frontmatter write, a project-only custom agent, and
 // removed-bundle retention — all inside the tmpDir fake cwd; the live .pi
 // tree is never touched.
+//
+// Sprint 5.13: §3d exercises the live-progress overlay wiring — the
+// ithacus-live store (startLive/parseJsonlLine/updateLive/endLive), the
+// IthLiveCard render surface, and registerDispatchTool(runtime)'s
+// wireLiveEventBus(runtime.eventBus) seam — with fake-bus + fake-theme seams,
+// no subprocess, no TUI.
 
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -553,6 +559,131 @@ try {
       check("cmds.plan discovery-based role parsing", cmdsSrc.includes("discoverIthacusAgents"));
       check("cmds.plan no hard-coded fixed roster array", !cmdsSrc.includes("KNOWN_ROLES"));
     }
+  }
+
+  // ========================================================================
+  // 3d. Sprint 5.13 live overlay — ithacus-live store + IthLiveCard + bus wire
+  // ========================================================================
+  // The live store is module-level state SHARED with dispatchMod (dispatch
+  // statically imports ./ithacus-live.js → rewritten to ithacus-live.ts in
+  // tmpDir, so `await import(join(tmpDir, "ithacus-live.ts"))` resolves to the
+  // same module instance). Fake event buses are the seam: startLive /
+  // updateLive / endLive publish IthacusEvents into whatever bus
+  // wireLiveEventBus() last wired.
+  {
+    const liveMod = await import(join(tmpDir, "ithacus-live.ts"));
+    const liveCardMod = await import(join(tmpDir, "ithacus-live-card.ts"));
+
+    const makeFakeBus = (sink) => ({
+      publish: (ev) => { sink.push(ev); },
+      subscribe: () => () => {},
+      history: () => [...sink],
+    });
+    const published = [];
+    liveMod.wireLiveEventBus(makeFakeBus(published));
+
+    // startLive creates a running entry + publishes run_started + spawning.
+    const liveId = "smoke-live-1";
+    liveMod.startLive(liveId, "explore", "claude-haiku-4-5", "read CLAUDE.md and report back");
+    const snap = liveMod.getLive(liveId);
+    check("live.startLive creates entry", typeof snap === "object" && snap !== null);
+    check("live.startLive running status", snap?.status === "running");
+    check("live.startLive agent+model+task",
+      snap?.agent === "explore" && snap?.model === "claude-haiku-4-5" &&
+      snap?.taskPreview === "read CLAUDE.md and report back");
+    check("live.startLive publishes run_started + spawning",
+      published.some((e) => e.type === "run_started" && e.runId === liveId) &&
+      published.some((e) => e.type === "agent_status" && e.runId === liveId && e.status === "spawning"));
+
+    // parseJsonlLine tolerates the variance a child stdout can emit.
+    check("live.parseJsonlLine blank null",
+      liveMod.parseJsonlLine("") === null && liveMod.parseJsonlLine("   \n") === null);
+    check("live.parseJsonlLine garbage null", liveMod.parseJsonlLine("not json {") === null);
+    check("live.parseJsonlLine valid parses",
+      liveMod.parseJsonlLine('{"type":"tool_execution_start","toolName":"read"}')?.type === "tool_execution_start");
+    check("live.parseJsonlLine extra fields tolerated",
+      liveMod.parseJsonlLine(JSON.stringify({ type: "message_end", someFutureField: 1 }))?.type === "message_end");
+
+    // updateLive — feed it the exact way dispatch execute() does:
+    // parse the rawJsonLine, apply to the live snapshot.
+    const t0 = Date.now();
+    const feed = (obj) => liveMod.updateLive(liveId, liveMod.parseJsonlLine(JSON.stringify(obj)), t0);
+    feed({ type: "tool_execution_start", toolName: "read", args: { path: "src/events.ts" } });
+    feed({ type: "tool_execution_end", toolName: "read", args: { path: "src/events.ts" } });
+    feed({ type: "message_end", message: { role: "assistant", model: "claude-haiku-4-5", usage: { input: 847, output: 412 } } });
+    const snap2 = liveMod.getLive(liveId);
+    check("live.updateLive counts tool call", snap2?.toolCallCount === 1);
+    check("live.updateLive records file access",
+      Array.isArray(snap2?.filesAccessed) && snap2.filesAccessed.includes("src/events.ts"));
+    check("live.updateLive tokens (latest-in + accumulated-out)",
+      snap2?.tokensIn === 847 && snap2?.tokensOut === 412 && snap2?.model === "claude-haiku-4-5");
+    check("live.updateLive publishes tool/tokens/working",
+      published.some((e) => e.type === "tool_execution_start" && e.runId === liveId && e.tool === "read") &&
+      published.some((e) => e.type === "agent_tokens" && e.runId === liveId) &&
+      published.some((e) => e.type === "agent_status" && e.runId === liveId && e.status === "working"));
+
+    // IthLiveCard — construct with a fake theme (same pattern as §3c's fake
+    // UI) and a fake hide-handle; render reads the LIVE store entry.
+    const card = new liveCardMod.IthLiveCard(
+      { fg: (_c, t) => t, bold: (t) => t },
+      liveId,
+      () => {}, // done hook (ctx.ui.custom would normally provide this)
+      () => {}, // requestRender
+    );
+    check("livecard width 52", card.width === 52);
+    card.setHandle({ hide: () => {} });
+    const runLines = card.render(52);
+    check("livecard render returns boxed lines", Array.isArray(runLines) && runLines.length >= 8);
+    const runText = runLines.join("\n");
+    check("livecard render mentions worker agent", runText.includes("explore"));
+    check("livecard render mentions model", runText.includes("claude-haiku-4-5"));
+    check("livecard render mentions task", runText.includes("read CLAUDE.md"));
+    check("livecard render mentions tokens", runText.includes("847 in") && runText.includes("412 out"));
+    check("livecard render running identity", runText.includes("ithacus —") && runText.includes("⟳ running"));
+
+    // endLive marks terminal + publishes agent_done/run_finished; the card
+    // renders the success state; removeLive purges; render degrades plain.
+    liveMod.endLive(liveId, true);
+    const termSnap = liveMod.getLive(liveId);
+    check("live.endLive terminal status", termSnap?.status === "success");
+    check("live.endLive freezes duration", typeof termSnap?.durationMs === "number" && termSnap.durationMs >= 0);
+    check("live.endLive publishes agent_done + run_finished",
+      published.some((e) => e.type === "agent_done" && e.runId === liveId && e.status === "done") &&
+      published.some((e) => e.type === "run_finished" && e.runId === liveId && e.status === "done"));
+    check("livecard render at terminal state", card.render(52).join("\n").includes("✓ success"));
+    card.markDone(); // schedules the 3s auto-dismiss (dispose cancels it below)
+    liveMod.removeLive(liveId);
+    check("live.removeLive purges entry", liveMod.getLive(liveId) === undefined);
+    const goneLines = card.render(52);
+    check("livecard plain fallback when store purged",
+      goneLines.length === 1 && goneLines[0].includes("ithacus"));
+    card.dispose(); // stop timers so nothing lingers past the summary
+
+    // Failure classification floor (DESIGN_LIVE_PROGRESS.md §3.1): 5.13 emits
+    // failureKind "unknown"; 5.14 refines.
+    liveMod.startLive("smoke-live-2", "plan");
+    liveMod.endLive("smoke-live-2", false, "boom");
+    const failSnap = liveMod.getLive("smoke-live-2");
+    check("live.endLive failed status + error text",
+      failSnap?.status === "failed" && failSnap?.error === "boom");
+    check("live.endLive failureKind unknown",
+      published.some((e) => e.type === "agent_done" && e.runId === "smoke-live-2" &&
+        e.status === "failed" && e.failureKind === "unknown"));
+    liveMod.removeLive("smoke-live-2");
+
+    // registerDispatchTool wires runtime.eventBus into the live store
+    // (DESIGN_LIVE_PROGRESS.md §3.3 / DESIGN_EVENT_STREAM.md §2.3 — one event
+    // stream, many views). Fake runtime carries ONLY an eventBus — the seam.
+    const wired = [];
+    dispatchMod.registerDispatchTool(
+      { registerTool: () => {}, on: () => {}, registerCommand: () => {}, setModel: () => {} },
+      { eventBus: makeFakeBus(wired) },
+    );
+    liveMod.startLive("smoke-live-3", "explore");
+    check("live.dispatch registration wires runtime eventBus",
+      wired.some((e) => e.type === "run_started" && e.runId === "smoke-live-3") &&
+      wired.some((e) => e.type === "agent_status" && e.runId === "smoke-live-3" && e.status === "spawning"));
+    liveMod.removeLive("smoke-live-3");
   }
 
   // ========================================================================

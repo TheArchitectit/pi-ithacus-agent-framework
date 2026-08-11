@@ -1,0 +1,68 @@
+/**
+ * src/events.ts — the typed event-stream vocabulary (Sprint 5.20,
+ * docs/DESIGN_EVENT_STREAM.md §2.1), layered into Sprint 5.13 from day one
+ * ("layer INTO Sprint 5.13" — make the live-progress store event-driven at
+ * birth rather than bolting a bus later).
+ *
+ * One typed `IthacusEvent` union that every live-visibility consumer shares:
+ * the 5.13 overlay store is the primary producer today; 5.14's richer status
+ * rows, the 5.12 web dashboard, and future fleet views subscribe to the same
+ * stream without touching producers (one event stream, many views).
+ *
+ * Pure types: zero runtime code, zero pi imports, zero network — src/ stays
+ * pi-agnostic (PREVENT-ITH-004). Unit-tested via `node --test`
+ * (src/event-bus.test.ts covers the bus that carries these).
+ */
+
+/**
+ * Live/runtime worker status (7 states).
+ *
+ * Seam note: docs/DESIGN_WORKER_STATUS.md (Sprint 5.14) OWNS the state
+ * machine that produces these; DESIGN_EVENT_STREAM.md (5.20) types the
+ * stream with them; 5.13 defines the union here because the event seam must
+ * compile now and src/types.ts is at its line budget (SPRINT_PLAN §Definition
+ * of Done #6 — new types go in split files). 5.13's dispatch only emits
+ * spawning → working → done/failed; the trust / permission / ready states
+ * arrive with 5.14's detection markers. AgentStatus in types.ts stays the
+ * coarse stored type (sqlite backward compat).
+ */
+export type WorkerStatus =
+  | "spawning"             // dispatch accepted, child not yet up
+  | "trust_required"       // child needs workspace trust confirmation
+  | "tool_permission"      // child paused waiting for a tool-permission grant
+  | "ready_for_prompt"     // child up, prompt queued, not yet running
+  | "working"              // actively processing (tokens flowing)
+  | "done"                 // finished successfully
+  | "failed";              // finished with error
+
+/**
+ * How a worker failed (carried by agent_done on failure). Sprint 5.14 refines
+ * the classification; 5.13 only ever emits "unknown".
+ */
+export type WorkerFailureKind =
+  | "context_window"       // ran out of context (→ retry via Sprint 5.17)
+  | "permission_denied"    // trust/tool permission never granted
+  | "timeout"              // exceeded maxRuntimeMs
+  | "crash"                // child process died
+  | "unknown";
+
+/**
+ * The single typed stream every ithacus view subscribes to
+ * (DESIGN_EVENT_STREAM.md §2.1 — field-for-field). `runId` scopes one
+ * dispatch run; `agentId` is the agent type surfaced in the view.
+ */
+export type IthacusEvent =
+  | { type: "run_started"; runId: string; ts: number }
+  | { type: "agent_status"; runId: string; agentId: string;
+      status: WorkerStatus; ts: number }
+  | { type: "agent_tokens"; runId: string; agentId: string;
+      input: number; output: number; total: number; ts: number }
+  | { type: "agent_tps"; runId: string; agentId: string;
+      tps: number; windowMs: number; ts: number }
+  | { type: "tool_execution_start"; runId: string; agentId: string;
+      tool: string; file?: string; ts: number }
+  | { type: "tool_execution_end"; runId: string; agentId: string;
+      tool: string; ok: boolean; durationMs: number; ts: number }
+  | { type: "agent_done"; runId: string; agentId: string;
+      status: "done" | "failed"; failureKind?: WorkerFailureKind; ts: number }
+  | { type: "run_finished"; runId: string; status: string; ts: number };
