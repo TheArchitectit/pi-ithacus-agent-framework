@@ -36,6 +36,7 @@
 | **5.23** | `DESIGN_WEB_INTERFACE.md` | Localhost web UI + setup panel on `node:http` (loopback, SSE from eventBus, bundled assets); THE toggle surface for Tier R | default-local |
 | **5.9-R** | `DESIGN_OPTIN_ENTERPRISE.md` §A | A2A v0.3.0 adapter: AgentCard, JSON-RPC `message/send`/`message/stream` SSE, `tasks/get`/`cancel` — bridges to local `ith_inbox` | opt-in-remote |
 | **5.25** | `DESIGN_OPTIN_ENTERPRISE.md` §B | External memory tier (Postgres+pgvector adapter, local Ollama embeddings); augments sqlite hindsight, never replaces | opt-in-remote |
+| **5.22** | `DESIGN_LIVE_A2A_ACCOUNTING.md` | Mailbox/handoff events on the eventBus (5 new variants), `▌ inbox`/`▌ handoffs` card sections, `ith_a2a_stats` rollup table | default-local |
 | **5.26** | `DESIGN_OPTIN_ENTERPRISE.md` §C | Fleet mesh over BYO Tailscale: AgentCard peer registry, presence heartbeats, A2A routing | opt-in-remote |
 
 Ordering: **5.24 first** (gate + config schema), then **5.23** (toggle surface),

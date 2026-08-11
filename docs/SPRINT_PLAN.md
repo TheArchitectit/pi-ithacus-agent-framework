@@ -741,8 +741,7 @@ visibility.
 
 ### Sprint 5.22: Live A2A Accounting
 
-**Status**: 📋 SPEC NEEDED (gap identified — peer-to-peer traffic not yet
-live-accounted)
+**Status**: 📋 SPEC — `docs/DESIGN_LIVE_A2A_ACCOUNTING.md`
 
 **Scope**: Emit `message_sent`/`message_read`/`handoff_initiated`/
 `handoff_accepted` events onto the existing eventBus from mailbox + handoff
