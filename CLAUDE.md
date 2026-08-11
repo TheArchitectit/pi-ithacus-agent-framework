@@ -73,6 +73,9 @@ them as authoritative and do not re-introduce such references.
 - **Tests**: `node --experimental-strip-types scripts/smoke-src.mjs` (Node 26
   strips TS types natively — no `tsc` install needed). `npm run build` (tsc) is
   optional for type-checking only.
+- **Versions**: one PATCH step per sprint (0.6.0 → 0.6.1 → …). Minor bumps
+  only for declared milestones. `scripts/deploy.sh` without args does this
+  automatically (auto patch bump).
 - **Commits**: one focused commit per task; AI-attribution REQUIRED
   (`Co-Authored-By: Claude <noreply@anthropic.com>` — see
   `docs/workflows/COMMIT_WORKFLOW.md`).
