@@ -46,10 +46,19 @@ async function loadAgentsModule(t: TestContext): Promise<AgentsModule> {
   });
   const extSrc = fileURLToPath(new URL("../extensions/ithacus-agents.ts", import.meta.url));
   const bundlesSrc = fileURLToPath(new URL("./agent-bundles.ts", import.meta.url));
-  const code = readFileSync(extSrc, "utf-8").replaceAll(
-    '"../src/agent-bundles.js"',
-    JSON.stringify(pathToFileURL(bundlesSrc).href),
-  );
+  // Sprint 5.15: ithacus-agents.ts additionally imports ../src/permissions.js
+  // (parsePermissionFrontmatter) — same remap as agent-bundles above so the
+  // copied module resolves the real pure resolver under strip-types.
+  const permsSrc = fileURLToPath(new URL("./permissions.ts", import.meta.url));
+  const code = readFileSync(extSrc, "utf-8")
+    .replaceAll(
+      '"../src/agent-bundles.js"',
+      JSON.stringify(pathToFileURL(bundlesSrc).href),
+    )
+    .replaceAll(
+      '"../src/permissions.js"',
+      JSON.stringify(pathToFileURL(permsSrc).href),
+    );
   const dest = join(work, "ithacus-agents.ts");
   writeFileSync(dest, code);
   return (await import(dest)) as AgentsModule;

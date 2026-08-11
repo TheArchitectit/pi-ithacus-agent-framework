@@ -13,6 +13,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process"; // guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: read-only `git rev-parse` to scope per-repo
+import { normalizePermissionMode, type PermissionMode } from "./permissions.js";
 
 /** Project name == folder name. The resident folder is `.pi/ithacus`. */
 export const PROJECT_NAME = "ithacus";
@@ -51,6 +52,15 @@ export interface IthacusConfig {
   memoryRecall: boolean;
   /** Fallback model list appended (deduped) after the caller's resolved model. */
   fallbackModels: string[];
+  /** Sprint 5.15 (DESIGN_PERMISSION_MODES.md §2.3): fail-safe default mode for
+   *  agents with no `permission:` declaration and no legacy `tools:`
+   *  (env ITHACUS_PERMISSION_MODE_DEFAULT; unknown values normalize to
+   *  read_only — fail-safe). */
+  permissionModeDefault: PermissionMode;
+  /** Sprint 5.15: when true, a missing permission declaration resolves to
+   *  read_only even when legacy `tools:` frontmatter exists (env
+   *  ITHACUS_PERMISSION_STRICT; default false = legacy pass-through). */
+  permissionStrict: boolean;
 }
 
 function envBool(name: string, fallback: boolean): boolean {
@@ -79,6 +89,8 @@ export function loadConfig(): IthacusConfig {
     debug: envBool("ITHACUS_DEBUG", false),
     memoryRecall: envBool("ITHACUS_MEMORY_RECALL", true),
     fallbackModels,
+    permissionModeDefault: normalizePermissionMode(process.env.ITHACUS_PERMISSION_MODE_DEFAULT),
+    permissionStrict: envBool("ITHACUS_PERMISSION_STRICT", false),
   };
 }
 

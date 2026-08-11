@@ -4,6 +4,12 @@
  * Re-exported by types.ts so existing './types.js' imports are unchanged.
  */
 
+// Sprint 5.15: AgentDefinition carries an optional permission declaration.
+// Import from ./types.js (NOT ./permissions.js) — types.ts is the single
+// import site for the permission types; this edge is type-only (erased at
+// strip, no runtime cycle).
+import type { AgentPermissions } from './types.js';
+
 /** An agent action recorded to the activity feed. */
 export interface ActivityEvent {
   id: string;
@@ -35,6 +41,11 @@ export interface AgentDefinition {
   tools: string[];
   /** trigger keywords to auto-select this agent. */
   triggers: string[];
+  /** Sprint 5.15: optional permission-mode declaration parsed from
+   *  `permission:`/`allow:`/`deny:` frontmatter (optional; the dispatch path
+   *  parses AgentConfig directly — definitions.ts discovery may surface this
+   *  for audit). */
+  permissions?: AgentPermissions;
 }
 
 /** User-defined team configuration. */

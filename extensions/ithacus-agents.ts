@@ -14,6 +14,9 @@
  *   name: explore
  *   description: Fast read-only codebase recon ...
  *   tools: read, grep, find, ls, bash
+ *   permission: read_only     # optional (Sprint 5.15): read_only | workspace_write | full_access
+ *   allow: bash               # optional: extra tools on top of the permission mode (Sprint 5.15)
+ *   deny:  write              # optional: explicit denials win over mode + allow (Sprint 5.15)
  *   model: claude-haiku-4-5
  *   provider: plexus            # optional; pins the provider for this agent
  *   ---
@@ -31,6 +34,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readManifest, sha256 } from "../src/agent-bundles.js";
+import { parsePermissionFrontmatter, type AgentPermissions } from "../src/permissions.js";
 
 export type AgentSource = "bundled" | "project";
 
@@ -47,6 +51,11 @@ export interface AgentConfig {
   systemPrompt: string;
   source: AgentSource;
   filePath: string;
+  /** Sprint 5.15 (DESIGN_PERMISSION_MODES.md): declared permission mode parsed
+   *  from `permission:`/`allow:`/`deny:` frontmatter. Undefined = no
+   *  declaration — the dispatch boundary then applies the legacy `tools:`
+   *  pass-through (or read_only when ITHACUS_PERMISSION_STRICT=true). */
+  permissions?: AgentPermissions;
 }
 
 /**
@@ -128,6 +137,9 @@ function loadAgentsFromDir(dir: string, source: AgentSource, suffix?: ".local"):
     const name = frontmatter.name;
     if (!name) continue;
     const toolsRaw = frontmatter.tools;
+    // Sprint 5.15: tolerant permission-declaration parse (null when no
+    // `permission:` key — the resolver's fail-safe/legacy path applies then).
+    const fmPerm = parsePermissionFrontmatter(frontmatter);
     agents.push({
       name,
       description: frontmatter.description ?? "",
@@ -137,6 +149,7 @@ function loadAgentsFromDir(dir: string, source: AgentSource, suffix?: ".local"):
       systemPrompt: body,
       source,
       filePath,
+      permissions: fmPerm ?? undefined,
     });
   }
   return agents;

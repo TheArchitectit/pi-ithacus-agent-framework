@@ -679,7 +679,7 @@ trust_required, tool_permission, ready_for_prompt, working, done, failed) +
 `WorkerFailureKind`. Borrowed from claw-code's `WorkerStatus`.
 
 #### Sprint 5.15: Agent Permission Modes
-**Status**: SPEC COMPLETE. **Doc**: `DESIGN_PERMISSION_MODES.md`.
+**Status**: ✅ SHIPPED (v0.6.2) — pure permission resolvers (`src/permissions.ts` / `src/extension-trust.ts` / `src/redact.ts`, smoke-src §29) + `permission:`/`allow:` roster frontmatter + single spawn-boundary enforcement in `ithacus-dispatch` (resolved `--tools` allowlist + source-trust ceiling + redacted `permission_resolved` audit event); legacy `tools:` pass-through preserved unless `ITHACUS_PERMISSION_STRICT=true`; live-store tool-arg previews secret-redacted. **Doc**: `DESIGN_PERMISSION_MODES.md`.
 Per-agent `PermissionMode` (read_only / workspace_write / full_access) declared
 in frontmatter, enforced at spawn via child `--tools` allowlist; deny wins.
 Adds the `writer` agent. Borrowed from claw-code's `AgentsPermissionArg`.

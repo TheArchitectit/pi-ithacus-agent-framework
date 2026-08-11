@@ -80,6 +80,10 @@ export const toolVisibility = await import(join(buildDir, 'tool-visibility.ts'))
 export const eventsMod = await import(join(buildDir, 'events.ts'))
 export const eventBus = await import(join(buildDir, 'event-bus.ts'))
 export const workerStatus = await import(join(buildDir, 'worker-status.ts'))
+// Sprint 5.15: permission-mode resolvers (pure, zero-import src/ files).
+export const permissions = await import(join(buildDir, 'permissions.ts'))
+export const extensionTrust = await import(join(buildDir, 'extension-trust.ts'))
+export const redact = await import(join(buildDir, 'redact.ts'))
 
 export let failures = 0;
 export function check(name, cond) {

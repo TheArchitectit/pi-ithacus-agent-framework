@@ -2,6 +2,7 @@
 name: explore
 description: Fast read-only codebase recon returning compressed context for handoff to other ithacus agents
 tools: read, grep, find, ls, bash, ithacus-mailbox
+permission: read_only
 model: claude-haiku-4-5
 ---
 

@@ -13,7 +13,7 @@
 
 import { MODE_PRESETS, type ModePreset } from "./config.js";
 export type { ModePreset };
-import type { AgentRole, IthAgent, IthRun, IthTask, WorkflowNode } from "./types.js";
+import type { AgentRole, IthAgent, IthRun, IthTask, PermissionMode, WorkflowNode } from "./types.js";
 import { generateWaves, validateDag } from "./workflow.js";
 
 export interface ResolvedModel {
@@ -116,6 +116,10 @@ export function planRun(opts: {
   /** optional workflow DAG — when supplied, plan.tasks is populated with
    *  dependency/wave-annotated IthTask rows. */
   workflow?: WorkflowNode[];
+  /** Sprint 5.15: optional per-role permission-mode stamp for the IthAgent
+   *  rows (pure plan metadata). Resolution stays at the spawn boundary
+   *  (dispatch) — this only carries the intended mode per role. */
+  permissionModeByRole?: Partial<Record<AgentRole, PermissionMode>>;
 }): TeamPlan {
   const preset = MODE_PRESETS[opts.mode];
   const model = resolveAgentModel(null, opts.resolved);
@@ -133,6 +137,7 @@ export function planRun(opts: {
       lastSeen: opts.now,
       resultSchema: null,
       resultValidated: false,
+      permissionMode: opts.permissionModeByRole?.[role],
     });
   }
   return {

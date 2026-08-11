@@ -2,6 +2,7 @@
 name: plan
 description: Produces an implementation plan from Explore findings and the task goal; may write/edit Markdown under docs/ only (docs/**/*.md)
 tools: read, grep, find, ls, bash, write, edit, ithacus-mailbox
+permission: read_only
 model: claude-sonnet-4-5
 ---
 

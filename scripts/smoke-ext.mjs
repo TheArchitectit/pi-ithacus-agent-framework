@@ -805,6 +805,12 @@ try {
       let bundlesCode = readFileSync(join(repoRoot, "src", "agent-bundles.ts"), "utf-8");
       bundlesCode = bundlesCode.replace(/(from\s+["']\.\.?\/[^"]+)\.js(["'])/g, "$1.ts$2");
       writeFileSync(join(distSrc, "agent-bundles.ts"), bundlesCode);
+      // Sprint 5.15: ithacus-agents.ts additionally imports ../src/permissions.js
+      // — mirror it into dist/src/ the same way so the published-layout import
+      // resolves exactly like the real package does.
+      let permsCode = readFileSync(join(repoRoot, "src", "permissions.ts"), "utf-8");
+      permsCode = permsCode.replace(/(from\s+["']\.\.?\/[^"]+)\.js(["'])/g, "$1.ts$2");
+      writeFileSync(join(distSrc, "permissions.ts"), permsCode);
       // Copy agent markdown into extensions/agents/ (package-root layout).
       for (const f of readdirSync(join(repoRoot, "extensions", "agents"))) {
         if (!f.endsWith(".md")) continue;

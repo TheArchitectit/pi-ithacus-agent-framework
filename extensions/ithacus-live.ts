@@ -26,6 +26,7 @@
 import type { IthacusEvent, WorkerFailureKind, WorkerStatus } from "../src/events.js";
 import type { IthacusEventBus } from "../src/event-bus.js";
 import { canTransition, classifyFailure, type WorkerFailureSignals } from "../src/worker-status.js";
+import { redactSecrets } from "../src/redact.js";
 
 // ---------------------------------------------------------------------------
 // Public types (DESIGN_LIVE_PROGRESS.md §3.1)
@@ -160,18 +161,21 @@ function extractFile(args?: Record<string, unknown>): string | null {
   for (const k of FILE_ARG_KEYS) {
     const v = args[k];
     if (typeof v === "string" && v.length > 0) {
-      return v.split("\n")[0].slice(0, 80); // preview
+      // Sprint 5.15: redact before store/bus — a file path can carry a token.
+      return redactSecrets(v.split("\n")[0].slice(0, 80)); // preview
     }
   }
   return null;
 }
 
-/** Short human args preview for the tool row (60 chars max, one line). */
+/** Short human args preview for the tool row (60 chars max, one line).
+ *  Sprint 5.15 (NO SECRETS): every preview (currentToolArgs + recentTools)
+ *  is secret-redacted before it can reach the store, overlay, or bus. */
 function argsPreview(args?: Record<string, unknown>): string | undefined {
   if (!args) return undefined;
   for (const k of ["command", "path", "file_path", "pattern", "query"]) {
     const v = args[k];
-    if (typeof v === "string" && v.length > 0) return v.split("\n")[0].slice(0, 60);
+    if (typeof v === "string" && v.length > 0) return redactSecrets(v.split("\n")[0].slice(0, 60));
   }
   return undefined;
 }

@@ -2,6 +2,8 @@
 name: writer
 description: Implementation agent — makes exactly the code changes an approved plan specifies; runs the verification gate; never commits or pushes
 tools: read, grep, find, ls, bash, write, edit, ithacus-mailbox
+permission: workspace_write
+allow: bash
 model: claude-sonnet-4-5
 ---
 

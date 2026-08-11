@@ -36,6 +36,12 @@ export interface IthAgent {
   resultSchema: string | null;
   /** whether the agent's last result passed `resultSchema` validation. */
   resultValidated: boolean;
+  /** Sprint 5.15: optional permission-mode stamp.
+   *  Stamped by planRun via opts.permissionModeByRole and/or set after
+   *  resolution at the spawn boundary; never required for reads. The durable
+   *  audit trail lands via runtime.appendEvent("permission_resolved", ...) —
+   *  no store-schema migration. */
+  permissionMode?: PermissionMode;
 }
 
 export interface IthTask {
@@ -279,6 +285,25 @@ export type { RelevanceScore, HindsightEntry, SearchResult, SchemeResolution } f
 
 // ---- Activity Feed + Definitions + Metrics + Plugins (Sprint 3.2) — split out ----
 export type { ActivityEvent, AgentDefinition, TeamDefinition, MetricPoint, PluginHook, Plugin } from './types-sprint-3.2.js';
+
+// ---- Agent Permission Modes (Sprint 5.15) — split out ----
+// types.ts is the stable import site; the declarations themselves live in the
+// pure, zero-import resolvers (permissions.ts) so every src/ consumer (team,
+// config, types-sprint-3.2) takes them from here.
+import type { PermissionMode } from './permissions.js'; // type-only — erased at strip
+export type { PermissionMode, AgentPermissions, PermissionOverride, ResolvedPermission } from './permissions.js';
+
+/** Audit record for a single dispatch's permission resolution. The dispatch
+ *  boundary appends this to events.log as `permission_resolved`; `ts` is
+ *  stamped by the runtime's appendEvent. */
+export interface PermissionAudit {
+  agentId: string;
+  mode: PermissionMode;
+  resolvedTools: string[];
+  /** ExtensionTrustLevel label from src/extension-trust.ts. */
+  sourceTrust: string;
+  ts: number;
+}
 
 // ---- LSP Integration (Sprint 4.1) — split out ----
 export type {

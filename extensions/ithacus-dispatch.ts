@@ -62,6 +62,10 @@ import type { IthRuntime } from "./ithacus-runtime.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
 import { registerToolWithVisibility } from "./ithacus-tool-registry.js";
 import { ToolVisibility } from "../src/tool-visibility.js";
+import { resolvePermissions } from "../src/permissions.js";
+import { applyTrustCeiling, trustFromSource } from "../src/extension-trust.js";
+import { redactForAudit } from "../src/redact.js";
+import { discoverIthacusAgents, findAgent } from "./ithacus-agents.js";
 
 // Compat re-export (Sprint 5.13 spawn-layer extraction): ithacus-team.ts:22
 // and ithacus-swarm.ts:19 import spawnAgent from THIS module — keep the site
@@ -103,6 +107,14 @@ const DispatchParams = Type.Object({
   cwd: Type.Optional(
     Type.String({ description: "Working directory for the child pi process." }),
   ),
+  // Sprint 5.15 (DESIGN_PERMISSION_MODES.md §2.3): the per-dispatch override
+  // channel — highest-precedence permission input at the spawn boundary.
+  tools: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Per-dispatch tool allowlist override (Sprint 5.15): merged on top of the agent's declared permission mode as an additive allow — the agent's deny list still wins, and the trust ceiling still clamps low-source agents.",
+    }),
+  ),
 });
 
 /**
@@ -129,7 +141,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
     parameters: DispatchParams,
     async execute(
       toolCallId: string,
-      params: { agent?: string; task: string; model?: string; provider?: string; cwd?: string },
+      params: { agent?: string; task: string; model?: string; provider?: string; cwd?: string; tools?: string[] },
       signal: AbortSignal | undefined,
       onUpdate: ((partial: { content: Array<{ type: "text"; text: string }>; details: DispatchDetails }) => void) | undefined,
       ctx: ExtensionContext,
@@ -140,6 +152,42 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // it; the smoke harness calls registerDispatchTool without one).
       if (runtime) maybeShowFirstDispatchNotice(runtime);
       const agentType = params.agent ?? "explore";
+      // Sprint 5.15 (DESIGN_PERMISSION_MODES.md §2.3): resolve + enforce the
+      // agent's declared permission mode at the spawn boundary — the child pi
+      // physically cannot call tools it wasn't given (--tools allowlist).
+      // trustFromSource + applyTrustCeiling clamp low-source (project) agents
+      // so they cannot self-escalate by declaring a higher mode in their own
+      // file; redactForAudit keeps secrets out of the events.log record
+      // (AGENT_GUARDRAILS NO SECRETS). Best-effort: the whole block is
+      // failure-isolated — on any error effectiveTools stays undefined and
+      // spawnAgent falls back to its own `opts.tools ?? agent.tools`
+      // (permission resolution NEVER breaks dispatch).
+      let effectiveTools: string[] | undefined;
+      try {
+        const agentCfg = findAgent(discoverIthacusAgents(), agentType);
+        if (agentCfg) {
+          const trust = trustFromSource(agentCfg.source);
+          const resolved = resolvePermissions({
+            declared: agentCfg.permissions ?? null,
+            legacyTools: agentCfg.tools,
+            override: params.tools ? { allow: params.tools } : undefined,
+            defaultMode: runtime?.config.permissionModeDefault ?? "read_only",
+            strict: runtime?.config.permissionStrict ?? false,
+          });
+          const effectiveMode = applyTrustCeiling(resolved.mode, trust);
+          // A clamped mode re-resolves from the mode alone (dropping allow
+          // extras) — the ceiling deliberately cannot carry escalations over.
+          effectiveTools = effectiveMode === resolved.mode
+            ? resolved.toolAllow
+            : resolvePermissions({ declared: { mode: effectiveMode } }).toolAllow;
+          runtime?.appendEvent("permission_resolved", redactForAudit({
+            agent: agentType,
+            mode: effectiveMode,
+            sourceTrust: trust,
+            resolvedTools: effectiveTools,
+          }));
+        }
+      } catch { /* permission resolution is best-effort — dispatch still proceeds */ }
       const dispatchId = `${toolCallId}-${Date.now()}`;
       const startTime = Date.now(); // execute()'s clock (updateLive durations)
       runtime?.dispatchStarted(agentType);
@@ -202,6 +250,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
           model: params.model,
           provider: params.provider,
           cwd: params.cwd,
+          tools: effectiveTools, // Sprint 5.15: physically enforced permission
           signal: signal ?? undefined,
           onProgress: (info) => {
             if (info.rawJsonLine) {
