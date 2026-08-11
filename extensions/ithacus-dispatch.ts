@@ -51,7 +51,7 @@ import { ToolVisibility } from "../src/tool-visibility.js";
 // ---------------------------------------------------------------------------
 
 export interface SpawnAgentOpts {
-  /** ithacus AgentRole ("Explore"|"Plan"|"Verification"|"Reviewer") or markdown agent name. */
+  /** Any discovered agent name (discoverIthacusAgents: bundled or project markdown def); legacy role names match case-insensitively. */
   agent: string;
   /** Task prompt for the sub-agent. */
   task: string;

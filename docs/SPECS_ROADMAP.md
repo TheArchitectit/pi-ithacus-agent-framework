@@ -26,6 +26,7 @@
 | **5.18** | `DESIGN_MEMORY_CONSOLIDATION.md` | Memory consolidation: supersede → collapse → cluster on `ith_memories`, in-process token-overlap scoring | memory-mcp Trident |
 | **5.19** | `DESIGN_TEAMS_CRONS.md` | Named team registry + cron-bound team schedules + `/ithacus-teams` overlay | claw-code Team/CronRegistry |
 | **5.20** | `DESIGN_EVENT_STREAM.md` | One typed event stream, many views (overlay + dashboard + fleet view share one bus); layer into 5.13 from day one | radcode stream protocol |
+| **5.21** | `DESIGN_TEAMS_AND_SIZES.md` | Named presets with discovered agent types, explicit role/slot composition, configurable size bounds, model/provider assignment, and bounded parallel dispatch | claw-code `expand_team_mode()` + TeamRegistry, adapted to ithacus |
 
 ## Recommended build order & rationale
 
@@ -39,6 +40,8 @@
    `writer` agent gets used broadly.
 5. **5.17 before long-horizon agents** — retries make long tasks viable.
 6. **5.16, 5.18, 5.19** in any order — independent quality-of-life sprints.
+7. **5.21 after 5.19** — extend named-team persistence with versioned composition
+   and size policy; require 5.15 before parallel presets may mutate files.
 
 ## Cross-cutting constraints (apply to every spec)
 

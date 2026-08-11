@@ -19,14 +19,18 @@
  *   ---
  *   <body = system prompt>
  *
- * ithacus's four roles (src/types.ts AgentRole) map 1:1 to the bundled agents:
- *   Explore → explore.md · Plan → plan.md · Verification → verification.md
- *   Reviewer → reviewer.md
+ * The roster is NOT fixed (Sprint 5.12.5). The legacy core roles
+ * (src/types.ts AgentRole) match bundled defs by name — Explore → explore.md,
+ * Plan → plan.md, Verification → verification.md, Reviewer → reviewer.md —
+ * and any additional bundled def (e.g. writer.md), project <name>.md, or
+ * <name>.local.md is discovered the same way. setup/dispatch consume this
+ * list dynamically; team composition slots stay legacy until Sprint 5.21.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readManifest, sha256 } from "../src/agent-bundles.js";
 
 export type AgentSource = "bundled" | "project";
 
@@ -53,8 +57,11 @@ export interface AgentConfig {
  * Tries each candidate; returns the first that exists. Falls back to the
  * source-layout candidate if none exist (discoverIthacusAgents returns [] for
  * a missing dir, so the error path stays recognizable).
+ *
+ * Exported (Sprint 5.12.5): the activation hook injects this into
+ * seedBundledAgents() and tests inject overrides.
  */
-function bundledAgentsDir(): string {
+export function bundledAgentsDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
     path.resolve(here, "agents"),                              // source/smoke: sibling
@@ -66,8 +73,12 @@ function bundledAgentsDir(): string {
   return candidates[0];
 }
 
-/** Project override dir: <repo>/.pi/ithacus/agents/. */
-function projectAgentsDir(): string {
+/**
+ * Project override dir: <repo>/.pi/ithacus/agents/.
+ * Exported (Sprint 5.12.5): the activation hook injects this into
+ * seedBundledAgents() and tests inject overrides.
+ */
+export function projectAgentsDir(): string {
   return path.resolve(process.cwd(), ".pi", "ithacus", "agents");
 }
 
@@ -89,7 +100,7 @@ function parseFrontmatter(content: string): {
   return { frontmatter: fm, body: match[2].trim() };
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+function loadAgentsFromDir(dir: string, source: AgentSource, suffix?: ".local"): AgentConfig[] {
   const agents: AgentConfig[] = [];
   if (!fs.existsSync(dir)) return agents;
   let entries: fs.Dirent[];
@@ -100,6 +111,11 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
   }
   for (const entry of entries) {
     if (!entry.name.endsWith(".md")) continue;
+    // Sprint 5.12.5: `.local.md` is the always-user tier — loaded only via the
+    // suffix filter; the default load excludes it (and dotfiles like the
+    // bundle-manifest are filtered by the .md check anyway).
+    const isLocal = entry.name.endsWith(".local.md");
+    if (suffix === ".local" ? !isLocal : isLocal || entry.name.startsWith(".")) continue;
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
     const filePath = path.join(dir, entry.name);
     let content: string;
@@ -126,18 +142,63 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
   return agents;
 }
 
+export interface DiscoverOptions {
+  /** Override the package bundled dir (tests). Defaults to bundledAgentsDir(). */
+  bundledDir?: string;
+  /** Override the project agents dir (tests). Defaults to projectAgentsDir(). */
+  projectDir?: string;
+}
+
 /**
- * Discover ithacus agents: bundled roster (extensions/agents/*.md) overridden
- * by project drops (<repo>/.pi/ithacus/agents/*.md) on a per-name basis.
- * Project wins; bundled agents not shadowed are still available.
+ * Discover ithacus agents with manifest-aware per-name resolution
+ * (Sprint 5.12.5, docs/DESIGN_AGENT_BUNDLES.md §7):
+ *
+ *   user-owned repo <name>.md  >  <name>.local.md  >  untouched seeded copy  >  package bundled
+ *
+ * "Untouched seeded" is proven by sha256(file) === .bundle-manifest.json hash;
+ * "user-owned" = no manifest entry, hash mismatch, or an untrusted/missing
+ * manifest (ownership is never guessed). Reading the manifest is read-only —
+ * discovery never writes to the project agents dir.
  */
-export function discoverIthacusAgents(): AgentConfig[] {
-  const bundled = loadAgentsFromDir(bundledAgentsDir(), "bundled");
-  const project = loadAgentsFromDir(projectAgentsDir(), "project");
-  if (project.length === 0) return bundled;
+export function discoverIthacusAgents(opts?: DiscoverOptions): AgentConfig[] {
+  const bundleDir = opts?.bundledDir ?? bundledAgentsDir();
+  const projectDir = opts?.projectDir ?? projectAgentsDir();
+  const bundled = loadAgentsFromDir(bundleDir, "bundled");
+  const repoDefs = loadAgentsFromDir(projectDir, "project");
+  const localDefs = loadAgentsFromDir(projectDir, "project", ".local");
+  if (repoDefs.length === 0 && localDefs.length === 0) return bundled;
+
+  const manifest = readManifest(projectDir);
+
   const byName = new Map<string, AgentConfig>();
   for (const a of bundled) byName.set(a.name, a);
-  for (const a of project) byName.set(a.name, a); // project overrides
+
+  // Repo <name>.md always outranks the packaged fallback; classify it as
+  // user-owned (beats <name>.local.md) or untouched-seeded (loses to it).
+  const userOwned = new Set<string>();
+  for (const a of repoDefs) {
+    byName.set(a.name, a);
+    let content: Buffer | null = null;
+    try {
+      content = fs.readFileSync(a.filePath);
+    } catch {
+      content = null; // unreadable → conservatively user-owned
+    }
+    const recorded = manifest?.agents[path.basename(a.filePath)];
+    const untouched =
+      typeof recorded === "string" &&
+      recorded.length > 0 &&
+      content !== null &&
+      sha256(content) === recorded;
+    if (!untouched) userOwned.add(a.name);
+  }
+
+  // <name>.local.md beats the bundled fallback and an untouched seeded copy,
+  // but never a user-owned repo <name>.md.
+  for (const a of localDefs) {
+    if (userOwned.has(a.name)) continue;
+    byName.set(a.name, a);
+  }
   return [...byName.values()];
 }
 

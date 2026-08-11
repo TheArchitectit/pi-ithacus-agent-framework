@@ -27,6 +27,101 @@ from typing import List, Dict, Tuple, Optional
 DEFAULT_REGISTRY_PATH = Path(".guardrails/failure-registry.jsonl")
 DEFAULT_RULES_PATH = Path(".guardrails/prevention-rules")
 
+# ---------------------------------------------------------------------------
+# Bundled agent-def validation (Sprint 5.12.5, docs/DESIGN_AGENT_BUNDLES.md
+# §9.1). Runs on every normal invocation so a malformed bundled def fails the
+# ordinary gate, and standalone via --validate-agent-bundles for deploy.sh's
+# pre-publish step. Locates extensions/agents/ via the script-derived repo
+# root so it works from any cwd.
+# ---------------------------------------------------------------------------
+
+# SYNC: keep token-for-token identical to AGENT_TOOL_ALLOWLIST in
+# src/agent-bundles.ts (adding a bundled-agent tool means editing BOTH lists).
+AGENT_TOOL_ALLOWLIST = frozenset([
+    "read", "grep", "find", "ls", "bash", "edit", "write",
+    "ithacus-mailbox", "ithacus-dispatch", "subagent_supervisor", "intercom",
+])
+
+REQUIRED_AGENT_KEYS = ("name", "description", "tools", "model")
+
+# Mirrors the TS parseFrontmatter regex in src/agent-bundles.ts.
+_AGENT_FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", re.DOTALL)
+
+
+def _parse_agent_frontmatter(content: str) -> Tuple[Optional[Dict[str, str]], Optional[str]]:
+    """Return (frontmatter dict, None) or (None, error string)."""
+    match = _AGENT_FRONTMATTER_RE.match(content)
+    if not match:
+        return None, "missing or unterminated frontmatter (expected leading --- ... ---)"
+    frontmatter: Dict[str, str] = {}
+    for lineno, line in enumerate(match.group(1).splitlines(), start=2):
+        if not line.strip():
+            continue
+        if ":" not in line:
+            return None, f"malformed frontmatter line {lineno} (expected 'key: value')"
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key:
+            frontmatter[key] = value.strip()
+    return frontmatter, None
+
+
+def _validate_agent_file_text(content: str, filename: str) -> List[str]:
+    """One bundled def -> list of human-readable problems ([] = valid)."""
+    problems: List[str] = []
+    frontmatter, fm_error = _parse_agent_frontmatter(content)
+    if fm_error is not None or frontmatter is None:
+        return [f"{filename}: {fm_error or 'missing frontmatter'}"]
+    for key in REQUIRED_AGENT_KEYS:
+        if key not in frontmatter:
+            problems.append(f"{filename}: missing required frontmatter key '{key}'")
+        elif not frontmatter[key]:
+            problems.append(f"{filename}: frontmatter key '{key}' has an empty value")
+    if problems:
+        return problems
+    name = frontmatter["name"]
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    if name != stem:
+        problems.append(f"{filename}: name '{name}' does not match filename stem '{stem}'")
+    tools = [t.strip() for t in frontmatter["tools"].split(",") if t.strip()]
+    if not tools:
+        problems.append(f"{filename}: tools list is empty")
+    unknown = [t for t in tools if t not in AGENT_TOOL_ALLOWLIST]
+    if unknown:
+        problems.append(
+            f"{filename}: unknown tool(s): {', '.join(unknown)} "
+            f"(allowlist: {', '.join(sorted(AGENT_TOOL_ALLOWLIST))})"
+        )
+    return problems
+
+
+def validate_agent_bundles(repo_root: Path) -> List[str]:
+    """Validate every extensions/agents/*.md bundled def under repo_root.
+
+    Returns a list of per-file problem strings ([] = all valid). Zero bundled
+    defs found is itself a problem (the package must ship its roster).
+    """
+    agents_dir = repo_root / "extensions" / "agents"
+    files = sorted(agents_dir.glob("*.md")) if agents_dir.is_dir() else []
+    if not files:
+        return [f"{agents_dir}: no bundled agent defs (*.md) found"]
+    problems: List[str] = []
+    for path in files:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            problems.append(f"{path.name}: unreadable ({exc})")
+            continue
+        problems.extend(_validate_agent_file_text(content, path.name))
+    return problems
+
+
+def _print_agent_bundle_problems(problems: List[str], stream=None) -> None:
+    out = stream if stream is not None else sys.stdout
+    print("\n✗ Agent bundle validation FAILED:", file=out)
+    for problem in problems:
+        print(f"  - {problem}", file=out)
+
 
 def run_git_command(args: List[str]) -> Tuple[int, str, str]:
     """Run a git command and return (returncode, stdout, stderr)."""
@@ -325,6 +420,7 @@ Examples:
     %(prog)s --unstaged         # Check unstaged changes
     %(prog)s --all              # Check all changes
     %(prog)s --pre-commit       # Exit with error if issues found
+    %(prog)s --validate-agent-bundles  # Validate bundled agent defs only
         """
     )
 
@@ -353,6 +449,8 @@ Examples:
                         help="Verbose output")
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Only output on issues found")
+    parser.add_argument("--validate-agent-bundles", action="store_true",
+                        help="Validate extensions/agents/*.md bundle defs only and exit")
 
     args = parser.parse_args()
 
@@ -361,6 +459,25 @@ Examples:
     unstaged = args.unstaged or args.all
     if args.all:
         staged = True
+
+    # Sprint 5.12.5: bundled agent-def validation runs on EVERY normal
+    # invocation (part of the ordinary gate, not only publish), and standalone
+    # via --validate-agent-bundles (deploy.sh pre-publish step). Failures here
+    # always exit non-zero — unlike advisory regression findings.
+    repo_root = Path(__file__).resolve().parent.parent
+    if args.validate_agent_bundles:
+        only_problems = validate_agent_bundles(repo_root)
+        if only_problems:
+            _print_agent_bundle_problems(only_problems)
+            sys.exit(1)
+        agents_dir = repo_root / "extensions" / "agents"
+        count_files = len(list(agents_dir.glob("*.md"))) if agents_dir.is_dir() else 0
+        print(f"✓ Agent bundle validation OK ({count_files} file(s) in extensions/agents/)")
+        sys.exit(0)
+
+    bundle_problems = validate_agent_bundles(repo_root)
+    if bundle_problems:
+        _print_agent_bundle_problems(bundle_problems, stream=sys.stderr if args.json else None)
 
     # Run check
     count, issues = run_regression_check(
@@ -380,7 +497,11 @@ Examples:
     elif not args.quiet or count > 0:
         print_report(issues, verbose=args.verbose)
 
-    # Exit code
+    # Exit code — bundle validation failures ALWAYS fail the gate (even
+    # without --pre-commit); regression findings stay advisory unless
+    # --pre-commit is passed (historical behavior).
+    if bundle_problems:
+        sys.exit(1)
     if args.pre_commit and count > 0:
         sys.exit(1)
     sys.exit(0)

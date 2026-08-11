@@ -119,20 +119,34 @@ python3 scripts/regression_check.py --all --pre-commit
 node scripts/guardrails-scan.mjs
 node scripts/semantic-scan.mjs
 node scripts/schema-health-check.mjs
+# --- 2b0. agent-bundle validation + pack dry-check (Sprint 5.12.5) ------------
+echo "[deploy] validating bundled agent defs (frontmatter + tool allowlist)"
+python3 scripts/regression_check.py --validate-agent-bundles
+echo "[deploy] agent-bundle validation OK."
 echo "[deploy] gate green."
 
 # --- 2b. npm payload verification (before tagging/pushing) -------------------
 # The gate built dist/, so the payload can be checked now. A broken tarball
 # must never be tagged, let alone published.
 PACK_LIST="$(npm pack --dry-run 2>&1)"
-for required in "dist/extensions/ithacus.js" "extensions/agents/explore.md"; do
-	if ! grep -qF "$required" <<<"$PACK_LIST"; then
-		echo "[deploy] ERROR: npm payload missing '$required' — package would be broken." >&2
+# The extension entry point must always ship.
+if ! grep -qF "dist/extensions/ithacus.js" <<<"$PACK_LIST"; then
+	echo "[deploy] ERROR: npm payload missing 'dist/extensions/ithacus.js' — package would be broken." >&2
+	printf '%s\n' "$PACK_LIST" | grep -E "total files|package size" >&2 || true
+	exit 1
+fi
+# Sprint 5.12.5: assert EVERY bundled agent def is in the payload (a missing
+# def bricks first-activation seeding in installed repos).
+shopt -s nullglob
+for f in extensions/agents/*.md; do
+	if ! grep -qF "$f" <<<"$PACK_LIST"; then
+		echo "[deploy] ERROR: npm payload missing '$f' — package would be broken." >&2
 		printf '%s\n' "$PACK_LIST" | grep -E "total files|package size" >&2 || true
 		exit 1
 	fi
 done
-echo "[deploy] npm payload verified (dist/extensions + extensions/agents present)."
+shopt -u nullglob
+echo "[deploy] npm payload verified (dist/extensions + all extensions/agents/*.md present)."
 
 # --- 3. bump version ----------------------------------------------------------
 if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then

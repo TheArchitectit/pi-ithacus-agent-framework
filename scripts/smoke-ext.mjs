@@ -21,6 +21,12 @@
 // injectable `spawnImpl` test seam (a fake EventEmitter that emits JSON
 // `message_end` lines). registerDispatchTool's execute() is exercised via the
 // unknown-agent early-return path (no subprocess spawned).
+//
+// Sprint 5.12.5: /ithacus-setup is exercised with a fake UI (queued select
+// answers) + a hermetic HOME models.json fixture — dynamic discovery roster,
+// writer bind → project frontmatter write, a project-only custom agent, and
+// removed-bundle retention — all inside the tmpDir fake cwd; the live .pi
+// tree is never touched.
 
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -43,6 +49,9 @@ const repoRoot = process.cwd();
 const tmpDir = mkdtempSync(join(repoRoot, ".smoke-ext-tmp-"));
 const agentsDir = join(tmpDir, "agents");
 mkdirSync(agentsDir, { recursive: true });
+// Hermetic HOME fixture (Sprint 5.12.5 setup smoke) — captured at module
+// scope so the finally below can always restore the caller's HOME.
+const prevHome = process.env.HOME;
 
 try {
   for (const f of readdirSync(join(repoRoot, "extensions"))) {
@@ -64,6 +73,21 @@ try {
   // during these checks. chdir back to repoRoot happens in the finally below.
   process.chdir(tmpDir);
 
+  // HERMETIC HOME (Sprint 5.12.5 setup smoke): collectModels() reads
+  // ~/.pi/agent/models.json via ithacus-provider-config.ts, which CAPTURES
+  // os.homedir() at module-import time — set HOME and write the provider
+  // fixture BEFORE importing any extension module below.
+  process.env.HOME = tmpDir;
+  mkdirSync(join(tmpDir, ".pi", "agent"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".pi", "agent", "models.json"),
+    JSON.stringify({
+      providers: {
+        fakeprov: { models: [{ id: "fake-model-a" }, { id: "fake-model-b" }] },
+      },
+    }),
+  );
+
   const agentsMod = await import(join(tmpDir, "ithacus-agents.ts"));
   const dispatchMod = await import(join(tmpDir, "ithacus-dispatch.ts"));
 
@@ -71,14 +95,41 @@ try {
   // 1. ithacus-agents.ts — markdown agent discovery
   // ========================================================================
 
+  // Sprint 5.12.5: the expected roster is DERIVED from the actual bundled
+  // extensions/agents/*.md files — never a hard-coded count — so adding a
+  // bundled def (e.g. writer.md) updates these assertions with no code edit.
+  const expectedNames = readdirSync(join(repoRoot, "extensions", "agents"))
+    .filter((f) => f.endsWith(".md") && !f.startsWith("."))
+    .map((f) => f.slice(0, -3))
+    .sort();
+
   const discovered = agentsMod.discoverIthacusAgents();
-  check("agents.discover returns 4", discovered.length === 4);
+  check("agents.discover matches bundled file roster",
+    discovered.length === expectedNames.length &&
+    expectedNames.every((n) => discovered.some((a) => a.name === n)));
 
   const byName = new Map(discovered.map((a) => [a.name, a]));
-  check("agents.has explore", byName.has("explore"));
-  check("agents.has plan", byName.has("plan"));
-  check("agents.has verification", byName.has("verification"));
-  check("agents.has reviewer", byName.has("reviewer"));
+  for (const n of expectedNames) check(`agents.has ${n}`, byName.has(n));
+
+  // writer.md (0.4.0 payload): full implementation role, discovered straight
+  // from the package bundle in the source layout (pre-seed).
+  const writer = byName.get("writer");
+  check("agents.writer discovered from package bundle",
+    writer !== undefined && writer.source === "bundled" &&
+    writer.filePath === join(agentsDir, "writer.md"));
+  check("agents.writer implementation tool set",
+    ["read", "grep", "find", "ls", "bash", "write", "edit", "ithacus-mailbox"]
+      .every((t) => writer?.tools?.includes(t)));
+  check("agents.writer package-portable default model (no provider pin)",
+    writer?.model === "claude-sonnet-4-5" && writer?.provider === undefined);
+
+  // bundled plan.md carries the docs-only-write contract (write/edit/bash).
+  const planAgent = byName.get("plan");
+  check("agents.plan docs-only-write tools",
+    Array.isArray(planAgent?.tools) && planAgent.tools.includes("write") &&
+    planAgent.tools.includes("edit") && planAgent.tools.includes("bash"));
+  check("agents.plan docs/**/*.md contract in body",
+    planAgent?.systemPrompt.includes("docs/**/*.md"));
 
   const explore = byName.get("explore");
   check("agents.explore model haiku", explore?.model === "claude-haiku-4-5");
@@ -347,6 +398,164 @@ try {
   }
 
   // ========================================================================
+  // 3c. /ithacus-setup — dynamic binding roster (Sprint 5.12.5 §8.3)
+  // ========================================================================
+  // Real registerSetupCommand + injected fake pi/UI + the hermetic HOME
+  // provider fixture above. process.cwd() is tmpDir → every setup write lands
+  // in tmpDir/.pi/ithacus/agents. The live .pi tree is never touched.
+  {
+    const setupMod = await import(join(tmpDir, "ithacus-setup.ts"));
+    const bundlesMod = await import(join(repoRoot, "src", "agent-bundles.ts"));
+    const projAgentsDir = join(tmpDir, ".pi", "ithacus", "agents");
+
+    function makeFakeSetup(answers) {
+      const selectCalls = [];
+      const notifies = [];
+      const queue = [...answers];
+      const ui = {
+        select: async (_prompt, choices) => {
+          selectCalls.push([...choices]);
+          return queue.shift();
+        },
+        input: async () => "",
+        notify: (msg, level) => { notifies.push({ msg, level }); },
+      };
+      return { ui, selectCalls, notifies };
+    }
+    const registeredCmds = {};
+    const cmdPi = {
+      registerCommand: (name, def) => { registeredCmds[name] = def; },
+      registerTool: () => {}, on: () => {}, setModel: () => {},
+    };
+    setupMod.registerSetupCommand(cmdPi);
+    check("setup.command registered", typeof registeredCmds["ithacus-setup"]?.handler === "function");
+    check("setup.providers command registered", typeof registeredCmds["ithacus-providers"]?.handler === "function");
+
+    const bindNames = (calls) =>
+      (calls[0] ?? []).filter((c) => c.startsWith("Bind: ")).map((c) => c.slice("Bind: ".length));
+    const runSetup = (answers) => {
+      const fake = makeFakeSetup(answers);
+      return registeredCmds["ithacus-setup"]
+        .handler("", { ui: fake.ui })
+        .then(() => fake);
+    };
+
+    // -- A. roster derives from fresh discovery (pre-seed: bundled sources) --
+    {
+      // No .pi/ithacus/agents yet (only the .pi/agent HOME fixture exists).
+      const fake = await runSetup(["--- Continue ---", "No (finish)"]);
+      const names = bindNames(fake.selectCalls);
+      check("setup.roster == discovered bundled names (dynamic roster)",
+        names.length === expectedNames.length &&
+        expectedNames.every((n) => names.includes(n)));
+      check("setup.roster exposes writer with no setup code edit", names.includes("writer"));
+      check("setup.roster deterministic sort",
+        JSON.stringify(names) === JSON.stringify([...names].sort()));
+      check("setup.roster sentinel choices present",
+        (fake.selectCalls[0] ?? []).includes("Manage providers…") &&
+        (fake.selectCalls[0] ?? []).includes("--- Continue ---"));
+      check("setup.roster continues to scaffold step",
+        (fake.selectCalls[1] ?? []).includes("No (finish)"));
+    }
+
+    // -- B. seed + bind writer via fake UI; ONLY writer frontmatter mutates --
+    {
+      const seedRes = bundlesMod.seedBundledAgents({
+        bundledDir: agentsDir,
+        projectAgentsDir: projAgentsDir,
+        packageVersion: "0.4.0",
+      });
+      check("setup.seed bundled defs OK",
+        seedRes.errors.length === 0 && seedRes.seeded.length === expectedNames.length);
+      const planBefore = readFileSync(join(projAgentsDir, "plan.md"), "utf-8");
+      const reviewerBefore = readFileSync(join(projAgentsDir, "reviewer.md"), "utf-8");
+      const dirCountBefore = readdirSync(projAgentsDir)
+        .filter((f) => f.endsWith(".md") && !f.startsWith(".")).length;
+
+      const fake = await runSetup([
+        "Bind: writer",            // agents menu → writer (discovered)
+        "fake-model-b (fakeprov)", // model menu → fixture model
+        "--- Continue ---",        // agents menu after re-discovery refresh
+        "No (finish)",             // scaffold menu
+      ]);
+      // The post-bind roster refresh must have run BEFORE the third select.
+      check("setup.bind refreshes roster after write (4 selects)", fake.selectCalls.length === 4);
+      const writerProj = readFileSync(join(projAgentsDir, "writer.md"), "utf-8");
+      check("setup.bind writes writer model frontmatter", /^model: fake-model-b$/m.test(writerProj));
+      check("setup.bind writes writer provider frontmatter", /^provider: fakeprov$/m.test(writerProj));
+      check("setup.bind keeps name + body", /^name: writer$/m.test(writerProj) &&
+        writerProj.includes("Four Laws"));
+      check("setup.bind leaves plan.md byte-identical",
+        readFileSync(join(projAgentsDir, "plan.md"), "utf-8") === planBefore);
+      check("setup.bind leaves reviewer.md byte-identical",
+        readFileSync(join(projAgentsDir, "reviewer.md"), "utf-8") === reviewerBefore);
+      check("setup.bind adds no files to agents dir",
+        readdirSync(projAgentsDir).filter((f) => f.endsWith(".md") && !f.startsWith(".")).length === dirCountBefore);
+      // The binding is visible to the very next discovery (fresh, project).
+      const wNow = agentsMod.discoverIthacusAgents().find((a) => a.name === "writer");
+      check("setup.bind re-discovered as project-sourced def",
+        wNow?.source === "project" && wNow?.model === "fake-model-b" &&
+        wNow?.provider === "fakeprov");
+    }
+
+    // -- C. project-only custom agent is listed + bindable --------------------
+    {
+      writeFileSync(join(projAgentsDir, "custom.md"), [
+        "---",
+        "name: custom",
+        "description: project-only custom agent",
+        "tools: read, grep",
+        "model: claude-haiku-4-5",
+        "---",
+        "",
+        "Project-only body marker.",
+        "",
+      ].join("\n"));
+      const customBefore = readFileSync(join(projAgentsDir, "custom.md"), "utf-8");
+      const fake = await runSetup([
+        "Bind: custom",
+        "fake-model-a (fakeprov)",
+        "--- Continue ---",
+        "No (finish)",
+      ]);
+      const names = bindNames(fake.selectCalls);
+      check("setup.custom project-only name listed", names.includes("custom"));
+      check("setup.custom roster grew by exactly one",
+        names.length === expectedNames.length + 1);
+      const customAfter = readFileSync(join(projAgentsDir, "custom.md"), "utf-8");
+      check("setup.custom binding model+provider persisted",
+        /^model: fake-model-a$/m.test(customAfter) && /^provider: fakeprov$/m.test(customAfter));
+      check("setup.custom identity+tools+body preserved",
+        /^description: project-only custom agent$/m.test(customAfter) &&
+        /^tools: read,grep$/m.test(customAfter) &&
+        customAfter.includes("Project-only body marker."));
+      check("setup.custom file rewritten from discovered def (not label parsing)",
+        customBefore !== customAfter);
+    }
+
+    // -- D. removed bundled name: surviving project def stays listed+intact ---
+    {
+      const reviewerBefore = readFileSync(join(projAgentsDir, "reviewer.md"), "utf-8");
+      rmSync(join(agentsDir, "reviewer.md")); // the package "removes" reviewer
+      const fake = await runSetup(["--- Continue ---", "No (finish)"]);
+      const names = bindNames(fake.selectCalls);
+      check("setup.removed-bundle name still listed from project def", names.includes("reviewer"));
+      check("setup.removed-bundle project file never pruned/overwritten",
+        existsSync(join(projAgentsDir, "reviewer.md")) &&
+        readFileSync(join(projAgentsDir, "reviewer.md"), "utf-8") === reviewerBefore);
+      check("setup.removed-bundle discovery exposes project survivor",
+        agentsMod.discoverIthacusAgents().some((a) => a.name === "reviewer" && a.source === "project"));
+    }
+
+    // -- E. /ithacus-plan agent tokens are discovery-based (source-level) -----
+    {
+      const cmdsSrc = readFileSync(join(tmpDir, "ithacus-commands.ts"), "utf-8");
+      check("cmds.plan discovery-based role parsing", cmdsSrc.includes("discoverIthacusAgents"));
+      check("cmds.plan no hard-coded fixed roster array", !cmdsSrc.includes("KNOWN_ROLES"));
+    }
+  }
+
+  // ========================================================================
   // 4. REGRESSION: published-package layout (v0.1.0 bug repro)
   // ========================================================================
   // v0.1.0 shipped ithacus-agents.js in dist/extensions/ but agents at
@@ -360,11 +569,22 @@ try {
     const pkgAgentsDir = join(pubDir, "extensions", "agents");
     mkdirSync(distExt, { recursive: true });
     mkdirSync(pkgAgentsDir, { recursive: true });
+    // Discovery is cwd-sensitive (project overrides): run the compiled-
+    // layout check from pubDir so section 3c's seeded tmpDir/.pi defs can't
+    // leak in; the roster here must be the PURE bundled payload.
+    process.chdir(pubDir);
     try {
       // Copy ithacus-agents.ts into dist/extensions/ (with .js→.ts rewrite).
       let agentsCode = readFileSync(join(repoRoot, "extensions", "ithacus-agents.ts"), "utf-8");
       agentsCode = agentsCode.replace(/(from\s+["']\.\.?\/[^"]+)\.js(["'])/g, "$1.ts$2");
       writeFileSync(join(distExt, "ithacus-agents.ts"), agentsCode);
+      // Sprint 5.12.5: ithacus-agents imports ../src/agent-bundles.js, which the
+      // real package ships at dist/src/agent-bundles.js — mirror that here.
+      const distSrc = join(pubDir, "dist", "src");
+      mkdirSync(distSrc, { recursive: true });
+      let bundlesCode = readFileSync(join(repoRoot, "src", "agent-bundles.ts"), "utf-8");
+      bundlesCode = bundlesCode.replace(/(from\s+["']\.\.?\/[^"]+)\.js(["'])/g, "$1.ts$2");
+      writeFileSync(join(distSrc, "agent-bundles.ts"), bundlesCode);
       // Copy agent markdown into extensions/agents/ (package-root layout).
       for (const f of readdirSync(join(repoRoot, "extensions", "agents"))) {
         if (!f.endsWith(".md")) continue;
@@ -380,13 +600,25 @@ try {
       // candidate (../../extensions/agents) to find the agents.
       const pubMod = await import(join(distExt, "ithacus-agents.ts"));
       const pubAgents = pubMod.discoverIthacusAgents();
-      check("pub.discovers 4 agents (compiled layout)", pubAgents.length === 4);
+      check("pub.discovers full roster (compiled layout)", pubAgents.length === expectedNames.length &&
+        expectedNames.every((n) => pubAgents.some((a) => a.name === n)));
       check("pub.has explore (compiled layout)", pubMod.findAgent(pubAgents, "explore")?.model === "claude-haiku-4-5");
       check("pub.has plan (compiled layout)", pubMod.findAgent(pubAgents, "Plan")?.name === "plan");
       check("pub.has verification (compiled layout)", pubMod.findAgent(pubAgents, "verification") !== undefined);
       check("pub.has reviewer (compiled layout)", pubMod.findAgent(pubAgents, "Reviewer") !== undefined);
+      // Sprint 5.12.5 payload: writer.md ships + bundled plan.md carries the
+      // docs-only-write contract — both REQUIRED in the npm payload.
+      const pubWriter = pubMod.findAgent(pubAgents, "writer");
+      check("pub.has writer (compiled layout)", pubWriter !== undefined &&
+        ["read", "grep", "find", "ls", "bash", "write", "edit", "ithacus-mailbox"]
+          .every((t) => pubWriter?.tools?.includes(t)));
+      const pubPlan = pubMod.findAgent(pubAgents, "plan");
+      check("pub.plan docs-only-write payload (compiled layout)",
+        Array.isArray(pubPlan?.tools) && pubPlan.tools.includes("write") &&
+        pubPlan.tools.includes("edit") && pubPlan.systemPrompt.includes("docs/**/*.md"));
       check("pub.all have systemPrompt (compiled layout)", pubAgents.every((a) => a.systemPrompt.length > 0));
     } finally {
+      process.chdir(tmpDir); // restore the harness cwd before removing pubDir
       try { rmSync(pubDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
@@ -403,6 +635,8 @@ try {
     console.log("ALL PASSED");
   }
 } finally {
+  if (prevHome === undefined) delete process.env.HOME;
+  else process.env.HOME = prevHome;
   process.chdir(repoRoot); // leave tmpDir before removing it (cwd must not be inside)
   // Always clean up the temp dir (under repo root — must not linger).
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }

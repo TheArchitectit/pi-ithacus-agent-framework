@@ -19,6 +19,7 @@ import { runSwarm, type SwarmSpec } from "./ithacus-swarm.js";
 import { SwarmStore } from "../src/store-swarm.js";
 import { synthesize } from "../src/synthesis.js";
 import { executePlan } from "./ithacus-plan.js";
+import { discoverIthacusAgents } from "./ithacus-agents.js";
 
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
@@ -205,20 +206,29 @@ export function registerTeamCommands(
 
   // ---- /ithacus-plan <goal> [roles...] (Sprint 5.6) ----------------------
   //   Synthesize a plan from a goal + agent roster, dispatch via swarm, persist.
-  //   usage: /ithacus-plan <goal> [role1 role2 ...]
-  //     e.g. /ithacus-plan "investigate auth module" Explore Plan Verification
+  //   usage: /ithacus-plan <goal> [agent1 agent2 ...]
+  //     e.g. /ithacus-plan "investigate auth module" explore plan writer
   registerCmd('ithacus-plan', async (args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const raw = (args as string)?.trim() ?? '';
     const parts = raw.split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return 'usage: /ithacus-plan <goal> [role1 role2 ...]';
+    if (parts.length === 0) return 'usage: /ithacus-plan <goal> [agent1 agent2 ...]';
 
-    // Heuristic: if last tokens match known roles, treat them as roles; rest is goal.
-    const KNOWN_ROLES = ['Explore', 'Plan', 'Verification', 'Reviewer'];
+    // Sprint 5.12.5 (DESIGN_AGENT_BUNDLES.md §7.1): trailing agent/role tokens
+    // resolve against the DISCOVERED roster (bundled + project + .local) —
+    // never a hard-coded four-role list — case-insensitively, passing the
+    // canonical discovered name through. Legacy team-mode parsing
+    // (tiny–mega in /ithacus-team) intentionally stays fixed until Sprint 5.21.
+    const knownAgents = new Map(
+      discoverIthacusAgents().map((a) => [a.name.toLowerCase(), a.name]),
+    );
     const roles: string[] = [];
-    let goalParts = [...parts];
-    while (goalParts.length > 1 && KNOWN_ROLES.includes(goalParts[goalParts.length - 1])) {
-      roles.unshift(goalParts.pop()!);
+    const goalParts = [...parts];
+    while (goalParts.length > 1) {
+      const hit = knownAgents.get(goalParts[goalParts.length - 1].toLowerCase());
+      if (hit === undefined) break;
+      goalParts.pop();
+      roles.unshift(hit);
     }
     const goal = goalParts.join(' ');
     if (!goal) return 'usage: /ithacus-plan <goal> [role1 role2 ...]';

@@ -18,12 +18,36 @@ import { registerMailboxTool } from "./ithacus-message.js";
 import { registerSetupCommand } from "./ithacus-setup.js";
 import { registerMenuCommand } from "./ithacus-menu.js";
 import { registerVersionWidget } from "./ithacus-widget.js";
-import { maybeShowVersionBump } from "./ithacus-version.js";
+import { maybeShowVersionBump, ownVersion } from "./ithacus-version.js";
 import { maybeShowOnLoadNotice } from "./ithacus-onboarding.js";
+import { seedBundledAgents } from "../src/agent-bundles.js";
+import { bundledAgentsDir, projectAgentsDir } from "./ithacus-agents.js";
 
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
   const runtime = new IthRuntime(config);
+  // Sprint 5.12.5 (DESIGN_AGENT_BUNDLES.md): seed the bundled agent roster
+  // into <repo>/.pi/ithacus/agents/ — version-gated, user-edit safe (edited
+  // files are reported, never clobbered). Best-effort: a failed seed is
+  // logged and never blocks activation.
+  try {
+    const seed = seedBundledAgents({
+      bundledDir: bundledAgentsDir(),
+      projectAgentsDir: projectAgentsDir(),
+      packageVersion: ownVersion(),
+    });
+    for (const name of seed.skippedModified) {
+      console.log(
+        `[ithacus] kept your edited .pi/ithacus/agents/${name} ` +
+          `(not overwritten by v${ownVersion()}); delete it to receive the updated bundled version.`,
+      );
+    }
+    for (const err of seed.errors) {
+      console.log(`[ithacus] agent bundle seeding warning: ${err}`);
+    }
+  } catch (err) {
+    console.log(`[ithacus] agent bundle seeding skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
   registerEventHandlers(pi, runtime, config);
   registerTeamCommands(pi, runtime, config);
   // Sprint 5.10: the `ithacus-dispatch` tool is the LLM-invoked entry point

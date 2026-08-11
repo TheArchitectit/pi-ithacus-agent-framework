@@ -1,10 +1,15 @@
 /**
  * ithacus-setup.ts — the `/ithacus-setup` slash command wizard.
  *
- * Interactive binding of models + providers to ithacus sub-agent roles, plus
- * scaffolding of new sub-agent markdown. Writes project overrides to
- * <repo>/.pi/ithacus/agents/<role>.md (the same dir discoverIthacusAgents()
- * reads as "project" overrides that win over the bundled roster).
+ * Interactive binding of models + providers to every DISCOVERED ithacus
+ * sub-agent — Sprint 5.12.5 (DESIGN_AGENT_BUNDLES.md §7.1): the bindable
+ * roster comes from a fresh discoverIthacusAgents() snapshot (bundled +
+ * project + .local), never a hard-coded list — plus scaffolding of new
+ * sub-agent markdown. Writes project overrides to
+ * <repo>/.pi/ithacus/agents/<name>.md (the same dir discoverIthacusAgents()
+ * reads as "project" overrides that win over the bundled roster). A bundled
+ * def removed from the package keeps its surviving project def visible and
+ * bindable; setup never prunes files or config.
  *
  * Reads provider/model config from models.json via loadPiSetupConfig().
  * Provider/model management is owned BY ithacus (ithacus-providers.ts):
@@ -29,9 +34,6 @@ import {
   type AgentConfig,
 } from "./ithacus-agents.js";
 
-const ROLES = ["explore", "plan", "verification", "reviewer"] as const;
-type Role = (typeof ROLES)[number];
-
 interface ModelOption {
   provider: string;
   id: string;
@@ -50,16 +52,24 @@ function collectModels(): ModelOption[] {
   return out;
 }
 
+/** Deterministic normalized-name sort for the picker roster. */
+function sortAgents(list: AgentConfig[]): AgentConfig[] {
+  return [...list].sort((a, b) => {
+    const x = a.name.toLowerCase();
+    const y = b.name.toLowerCase();
+    if (x !== y) return x < y ? -1 : 1;
+    return a.name === b.name ? 0 : a.name < b.name ? -1 : 1;
+  });
+}
+
 /** Build the frontmatter+body for a project override agent .md file. */
-function buildAgentMarkdown(bundled: AgentConfig | undefined, model: string, provider: string): string {
-  const tools = bundled?.tools ?? ["read", "grep", "find", "ls", "bash"];
-  const description = bundled?.description ?? `${bundled?.name ?? "agent"} role in an ithacus team`;
-  const body =
-    bundled?.systemPrompt ??
-    `You are the ${bundled?.name ?? "agent"} role in an ithacus team.`;
+function buildAgentMarkdown(name: string, agent: AgentConfig | undefined, model: string, provider: string): string {
+  const tools = agent?.tools ?? ["read", "grep", "find", "ls", "bash"];
+  const description = agent?.description || `${name} agent in an ithacus team`;
+  const body = agent?.systemPrompt || `You are the ${name} agent in an ithacus team.`;
   return [
     "---",
-    `name: ${bundled?.name ?? "agent"}`,
+    `name: ${name}`,
     `description: ${description}`,
     `tools: ${tools.join(",")}`,
     `model: ${model}`,
@@ -71,12 +81,19 @@ function buildAgentMarkdown(bundled: AgentConfig | undefined, model: string, pro
   ].join("\n");
 }
 
-function writeAgentOverride(role: string, model: string, provider: string): string {
-  const bundled = discoverIthacusAgents().find((a) => a.name === role);
+/**
+ * Persist a binding: (re)write the agent's project frontmatter with the
+ * chosen model+provider. `agent` is the SAME discoverIthacusAgents() snapshot
+ * entry the picker listed — identity, description, tools, and body carry
+ * through unchanged; ONLY model/provider mutate. Frontmatter in the project
+ * def remains the sole binding-persistence mechanism; nothing here deletes
+ * or prunes project files/config (Sprint 5.12.5).
+ */
+function writeAgentOverride(agent: AgentConfig, model: string, provider: string): string {
   const dir = path.resolve(process.cwd(), ".pi", "ithacus", "agents");
   fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${role}.md`);
-  fs.writeFileSync(file, buildAgentMarkdown(bundled, model, provider), {
+  const file = path.join(dir, `${agent.name}.md`);
+  fs.writeFileSync(file, buildAgentMarkdown(agent.name, agent, model, provider), {
     encoding: "utf-8",
     mode: 0o600,
   });
@@ -105,22 +122,23 @@ function buildNewAgentMarkdown(
   ].join("\n");
 }
 
+/**
+ * Bind flow for ONE discovered agent — an arbitrary discovered name (bundled,
+ * project, or .local origin), not a fixed four-value union (Sprint 5.12.5).
+ */
 async function bindRoleFlow(
   ui: ExtensionCommandContext["ui"],
-  role: Role,
+  agent: AgentConfig,
   models: ModelOption[],
 ): Promise<void> {
-  const bundled = discoverIthacusAgents().find((a) => a.name === role);
-  const current = bundled
-    ? `${bundled.model ?? "(default)"}${bundled.provider ? ` (${bundled.provider})` : ""}`
-    : "(none)";
+  const current = `${agent.model ?? "(default)"}${agent.provider ? ` (${agent.provider})` : ""} [${agent.source}]`;
   const choices = [...models.map((m) => m.label), "< Back"];
-  const pick = await ui.select(`Model for ${role} [current: ${current}]:`, choices);
+  const pick = await ui.select(`Model for ${agent.name} [current: ${current}]:`, choices);
   if (!pick || pick === "< Back") return;
   const match = models.find((m) => m.label === pick);
   if (!match) return;
-  const file = writeAgentOverride(role, match.id, match.provider);
-  ui.notify(`${role} → ${match.id} (${match.provider}) saved to ${path.relative(process.cwd(), file)}`, "info");
+  const file = writeAgentOverride(agent, match.id, match.provider);
+  ui.notify(`${agent.name} → ${match.id} (${match.provider}) saved to ${path.relative(process.cwd(), file)}`, "info");
 }
 
 async function scaffoldNewAgent(
@@ -152,7 +170,7 @@ async function scaffoldNewAgent(
 export function registerSetupCommand(pi: ExtensionAPI): void {
   pi.registerCommand("ithacus-setup", {
     description:
-      "Configure ithacus sub-agent models + providers per role, and scaffold new agents",
+      "Configure model+provider bindings for every discovered ithacus sub-agent, and scaffold new agents",
     handler: async (_args, ctx: ExtensionCommandContext) => {
       const ui = ctx.ui;
 
@@ -169,23 +187,38 @@ export function registerSetupCommand(pi: ExtensionAPI): void {
 
       const providerCount = new Set(models.map((m) => m.provider)).size;
       ui.notify(
-        `ithacus setup: ${models.length} model(s) across ${providerCount} provider(s). Bind a role to change its default model.`,
+        `ithacus setup: ${models.length} model(s) across ${providerCount} provider(s). Bind an agent to change its default model.`,
         "info",
       );
 
-      // Step 1: per-role model binding loop.
-      let step: "roles" | "scaffold" | "" = "roles";
+      // Step 1: per-agent model binding loop.
+      // Sprint 5.12.5 (DESIGN_AGENT_BUNDLES.md §7.1): FRESH discovery on
+      // entry and after every roster-changing operation (a bind writes
+      // project frontmatter; scaffolding adds a project def). Empty roster
+      // surfaces visibly instead of rendering an empty picker.
+      let agents: AgentConfig[] = [];
+      const refreshRoster = (): void => {
+        agents = sortAgents(discoverIthacusAgents());
+        if (agents.length === 0) {
+          ui.notify(
+            "No ithacus agents discovered (bundled or project) — nothing to bind. Scaffold one below or restore extensions/agents/*.md.",
+            "warning",
+          );
+        }
+      };
+      refreshRoster();
+
+      let step: "agents" | "scaffold" | "" = "agents";
       while (step) {
-        if (step === "roles") {
+        if (step === "agents") {
           const snap = providerSnapshot();
-          const roleChoices = [
-            ...ROLES.map((r) => `Bind: ${r}`),
-            "Manage providers…",
-            "--- Continue ---",
-          ];
+          // Label→agent map: a selection resolves against THIS SAME snapshot
+          // — display labels are never string-parsed back into agent names.
+          const bindByLabel = new Map<string, AgentConfig>();
+          for (const a of agents) bindByLabel.set(`Bind: ${a.name}`, a);
           const pick = await ui.select(
-            `ithacus sub-agent roles (${snap.providerCount} provider(s), ${snap.modelCount} model(s)):`,
-            roleChoices,
+            `ithacus sub-agents (${agents.length} discovered · ${snap.providerCount} provider(s), ${snap.modelCount} model(s)):`,
+            [...bindByLabel.keys(), "Manage providers…", "--- Continue ---"],
           );
           if (!pick || pick === "--- Continue ---") {
             step = "scaffold";
@@ -196,9 +229,10 @@ export function registerSetupCommand(pi: ExtensionAPI): void {
             models = collectModels();
             continue;
           }
-          const role = pick.replace(/^Bind: /, "") as Role;
-          if (ROLES.includes(role)) {
-            await bindRoleFlow(ui, role, models);
+          const chosen = bindByLabel.get(pick);
+          if (chosen) {
+            await bindRoleFlow(ui, chosen, models);
+            refreshRoster(); // the bind wrote project frontmatter → re-discover
           }
           continue;
         }
@@ -210,6 +244,7 @@ export function registerSetupCommand(pi: ExtensionAPI): void {
           ]);
           if (scaffold === "Yes") {
             await scaffoldNewAgent(ui, models);
+            refreshRoster(); // the new def is bindable immediately
             continue;
           }
           step = "";

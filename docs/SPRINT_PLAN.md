@@ -586,6 +586,71 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 ### Tier 6: Live Visibility, Status, Permissions & Memory (post-v0.3.x)
 
+#### Sprint 5.12.5: npm-shipped Agent Bundles with Version-Gated Seeding
+**Status**: SPEC COMPLETE. **Doc**: `DESIGN_AGENT_BUNDLES.md`.
+Seed every bundled definition into `<repo>/.pi/ithacus/agents/` on activation;
+stamp `.bundle-version`; track seeded sha256 values in `.bundle-manifest.json`;
+upgrade untouched files while preserving user edits; support manifest-aware
+precedence: user-owned repo `<name>.md` > `<name>.local.md` > untouched seeded
+copy > package bundled fallback. Added bundled or project agent names are
+immediately discovered and configurable; removing a name from the bundle never
+deletes/prunes its surviving project definition or silently deletes its saved
+model/provider frontmatter. Validate every bundled definition in the normal
+regression gate and deploy preflight. Zero network (PREVENT-ITH-004), npm-only
+distribution (PREVENT-DIST-001).
+
+**0.4.0 release requirements**:
+- `/ithacus-setup` derives its binding roster from a fresh
+  `discoverIthacusAgents()` result, never a hard-coded role/name array. A newly
+  bundled/seeded `writer` and any valid project-defined agent appear without a
+  setup source edit and can persist `model`/`provider` bindings in project
+  frontmatter.
+- The npm payload includes `extensions/agents/writer.md`; the bundled source of
+  truth `extensions/agents/plan.md` contains the docs-only-write planning role
+  (Markdown writes under `docs/` only), rather than that role existing only in
+  `.pi` local state.
+- Setup and published-layout smoke coverage uses discovered/fixture-derived
+  counts, tests add/remove retention and binding behavior, and updates every
+  stale fixed-count assertion. Applicable fixed agent-token parsing in
+  `extensions/ithacus-commands.ts` becomes discovery-based.
+- Arbitrary names are configurable/discoverable only. Do not broadly widen
+  `src/types.ts`, `src/config.ts`, `src/team.ts`, `AgentRole`, `ModePreset`, or
+  the tiny–mega team schema: Sprint 5.21 owns arbitrary dynamic team roles and
+  composition slots.
+
+**Implementation scope (dependency order)**:
+1. `extensions/agents/writer.md`, `extensions/agents/plan.md` — required bundled
+   definitions/source prompts.
+2. `src/agent-bundles.ts`, `src/agent-bundles.test.ts` — pi-agnostic dynamic
+   seeding, preservation, validation, and add/remove tests.
+3. `extensions/ithacus-agents.ts`, `extensions/ithacus-setup.ts` — dynamic
+   discovery/precedence and setup roster/binding flow.
+4. `extensions/ithacus-commands.ts` — dynamic parsing only where agent-name
+   parsing applies; preserve legacy team preset parsing.
+5. `extensions/ithacus.ts`, `scripts/smoke-ext.mjs` — activation and dynamic
+   setup/published-layout smoke coverage, with no fixed roster count.
+6. `scripts/regression_check.py`, `scripts/deploy.sh` — validate all discovered
+   bundled definitions and require all of them in the npm payload.
+
+**Acceptance criteria**:
+- Adding a bundled or project definition makes it visible and bindable on the
+  next setup discovery; `writer` is proven through smoke coverage.
+- Removing a bundled definition does not delete, prune, hide, or silently
+  rewrite a surviving project definition/config; it remains configurable while
+  its project markdown exists.
+- The 0.4.0 npm payload includes `writer.md` and the docs-only-write bundled
+  `plan.md`; validation and smoke tests reject their absence.
+- Setup and applicable command parsing have no fixed agent-name roster; all
+  roster counts are derived dynamically. Legacy team schemas remain unchanged.
+- Unit tests, extension smoke, build, guardrails, and regression gates pass
+  offline.
+
+**Dependencies**: Sprint 5.10 (markdown agents), Sprint 5.11 (activation wiring).
+Sprint 5.21 consumes this dynamic discovery/configuration baseline to make
+arbitrary names team composition roles/slots.
+
+**Approval required**: Yes.
+
 > Source: three explorer-agent reviews of claw-code, memory-mcp, and radcode
 > (`docs/RESEARCH_EXTERNAL_SOURCES.md`, `docs/SPECS_ROADMAP.md`). Every sprint
 > below is spec'd in its own DESIGN_*.md. Zero external services — borrowed
@@ -643,6 +708,23 @@ Named `TeamRegistry` + cron-bound team schedules + `/ithacus-teams` overlay,
 reusing Sprint 4.5 scheduler + Sprint 2.4 async-run path. Borrowed from
 claw-code Team/CronRegistry.
 
+#### Sprint 5.21: Teams + Configurable Team Sizes
+**Status**: FUTURE SPEC COMPLETE — implementation requires explicit approval.
+**Doc**: `DESIGN_TEAMS_AND_SIZES.md`.
+Extend 5.19's named teams into versioned presets with dynamically discovered
+agent types, explicit role and slot composition, min/default/max total size,
+per-role counts, model/provider/profile assignments, validation, run snapshots,
+and bounded parallel execution. Preserve tiny–mega as today's 1–6 total-agent
+compatibility presets; claw-code's 4–24-agent multiplier pattern is available
+only under new unambiguous preset names. Roll out from inspect/dry-run, through
+serial named execution, to opt-in capped concurrency.
+
+**Dependencies**: Sprint 5.19 for named-team CRUD/persistence; Sprint 5.15 before
+mutating roles execute concurrently; Sprints 5.13/5.20 recommended for live
+visibility.
+
+**Approval required**: Yes — schema migration and dispatch semantics change.
+
 ---
 
 ## Summary
@@ -657,8 +739,8 @@ claw-code Team/CronRegistry.
 | TIER 3 (v0.4.0) | 2 sprints | 4 weeks | +6 | +1,500 | 34 files, 5,500 lines |
 | TIER 4 (v1.0+) | 5 sprints | 36-48 weeks | +4 | +1,500 | ~38 files, ~7,000 lines |
 | TIER 5 (v1.1+) | 9 sprints | 10-14 weeks | +10 | +2,000 | ~62 files, ~7,700 lines |
-| TIER 6 (post-v0.3.x) | 8 sprints | 8-10 weeks | +8 | +1,400 | ~14 files, ~1,900 lines |
-| **Total** | **31 sprints** | **72-90 weeks** | **+44** | **+9,650** | **~76 files, ~9,600 lines** |
+| TIER 6 (post-v0.3.x) | 9 sprints | 10-12 weeks | +11 | +2,100 | ~17 files, ~2,600 lines |
+| **Total** | **32 sprints** | **74-92 weeks** | **+47** | **+10,350** | **~79 files, ~10,300 lines** |
 
 ---
 
