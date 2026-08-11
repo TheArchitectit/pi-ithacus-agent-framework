@@ -57,12 +57,50 @@ already uses).
 - Session-ID normalization truncates any long id with a dash → prefix collisions.
   Lesson: use real UUID validation.
 
-### 1.3 radcode (`TheArchitectit/radcode`)
-**Does not exist (404).** The owner's 19 public repos do not include `radcode`.
-Likely a misresolution (possibly the R.A.D.1.C.A.L codename was confused with a
-repo name). **Recommendation:** drop `radcode` from future planning; the existing
-`docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md` is likely stale and should be reviewed
-for accuracy or removed.
+### 1.3 radcode (local clone at `/mnt/data/git/RADOPENCODE/`)
+**Correction to earlier finding:** `TheArchitectit/radcode` on GitHub 404s, but
+radcode exists LOCALLY at `/mnt/data/git/RADOPENCODE/` — and
+`docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md` already cited it correctly (not stale).
+
+radcode is a Rust workspace: a TUI coding agent with a pluggable **Backend
+trait** (`LightBackend` = local execution, `RadicalBackend` = A2A/MCP remote
+orchestration). Key crates: `radcode-core` (session/engine/stream), `radcode-tui`
+(ratatui front-end), `radcode-backends`, `radcode-a2a`, `web/` (web UI).
+
+| Feature | Present? | How / where |
+|---|---|---|
+| Agent dispatch / sub-agent spawning | ✅ | Backend trait `dispatch` — LightBackend spawns local sessions, RadicalBackend routes over A2A |
+| Team / swarm orchestration | 🟰 | RadicalBackend delegates to radical's swarm; radcode itself is a client, not the orchestrator |
+| **Live progress / real-time status** | ✅ | **Stream-update driven**: session engine emits typed stream events (text delta, tool_call start/end, usage) and the TUI re-renders per event — the exact pattern Sprint 5.13 needs |
+| TPS tracking | 🟰 | Usage/tokens surfaced per stream chunk; TPS derivable from token deltas over time (not a dedicated counter) |
+| File-access tracking | 🟰 | Tool-call events carry file paths (read/edit/write tool calls) — extractable per agent |
+| TUI overlays / progress cards | ✅ | ratatui overlay/pane system with live-updating status panes |
+| Memory / context sharing | 🟰 | Via A2A message passing between backends, not a shared store |
+| Scheduling | ⬜ | None in radcode (ithacus has `src/scheduler.ts` ✅) |
+| Review / verification agents | ⬜ | Not radcode's role (handled by radical/memory-mcp backends) |
+| Guardrails / scanners | ⬜ | None (ithacus's DevGate vendored scripts are ahead here) |
+| Model-per-agent | ✅ | Backend/session config carries model selection per session |
+| Permission modes | 🟰 | Tool allowlists per session config |
+
+**Borrowable patterns for ithacus (all zero-external-service compatible):**
+- **Stream-event live rendering** — the TUI subscribes to a typed event stream
+  (text_delta / tool_execution_start / tool_execution_end / usage) and renders
+  per-event. This validates and refines Sprint 5.13's design: drive the overlay
+  from pi child `--mode json` events exactly like radcode drives panes from
+  stream events.
+- **Backend trait abstraction** — ithacus currently hard-codes dispatching the
+  local `pi` binary. A `DispatchBackend` interface (local-pi now, A2A remote in
+  Sprint 5.9) would make 5.9 a clean swap instead of a rewrite.
+- **Session rewind/resume persistence** — sessions serialized with full event
+  log for replay; informs Sprint 5.16 checkpoint manager design.
+
+**Unique capabilities ithacus lacks (candidates for future specs):**
+- Typed stream-event protocol shared between engine and ALL renderers (TUI +
+  web) — one event stream, many views. ithacus could expose its live-progress
+  store the same way so the future web dashboard (Sprint 5.12) renders the SAME
+  events the overlay does.
+- Pluggable backends (local vs remote) behind one trait.
+- Web UI (`web/` crate) mirroring the TUI state.
 
 ---
 
@@ -77,6 +115,11 @@ Mapped to the existing sprint plan (Sprint 5.13 onward):
   .catch, handleInput inert for nonCapturing).
 - **Differentiator confirmed:** neither claw-code nor memory-mcp tracks TPS or
   per-agent file-access — ithacus's `AgentLive` model includes both.
+- **radcode validates the design:** its TUI renders live progress by subscribing
+  to a typed stream-event engine (text_delta / tool_execution_start / end /
+  usage) — the exact "overlay shown at START, driven per event" pattern in
+  DESIGN_LIVE_PROGRESS.md. File-access tracking comes free from tool-call events
+  carrying file paths.
 
 ### Sprint 5.14 (proposed) — Richer Worker Status State Machine
 - Borrow claw-code's `WorkerStatus` states: `Spawning / TrustRequired /
@@ -142,6 +185,26 @@ Mapped to the existing sprint plan (Sprint 5.13 onward):
 - memory-mcp confirms the A2A protocol pattern for agent-to-agent context
   sharing. Sprint 5.9 (already in the plan) covers this — the research validates
   the existing spec direction.
+- **radcode refines the approach:** radcode hides its local-vs-remote dispatch
+  behind a single **Backend trait** (`LightBackend` local, `RadicalBackend`
+  A2A/remote). ithacus currently hard-codes dispatching the local `pi` binary.
+  Introducing a `DispatchBackend` interface in `src/` now makes Sprint 5.9 a
+  clean swap instead of a rewrite. **Scope addition for 5.9:**
+  `src/dispatch-backend.ts` (trait), `extensions/ithacus-dispatch.ts` (use it).
+
+### Sprint 5.20 (proposed) — One Event Stream, Many Views
+- Borrow radcode's typed stream-event protocol: the session engine emits one
+  typed event stream (`text_delta`, `tool_execution_start`,
+  `tool_execution_end`, `usage`) and EVERY renderer (TUI + web) subscribes to
+  the SAME stream. ithacus currently has no shared event bus.
+- This unifies Sprint 5.13 (overlay), Sprint 5.12 (web dashboard), and Sprint
+  5.14 (richer status) behind ONE live-event stream instead of three ad-hoc
+  paths. **Scope:** `src/events.ts` (typed event emitter, pi-agnostic),
+  `extensions/ithacus-live.ts` (publish events),
+  `extensions/ithacus-live-card.ts` + future dashboard (subscribe).
+- **Implementation note:** can be layered INTO Sprint 5.13 cheaply — make the
+  live-progress store event-driven from day one rather than bolting a bus on
+  later.
 
 ---
 
@@ -167,8 +230,10 @@ Mapped to the existing sprint plan (Sprint 5.13 onward):
    memory consolidation, named teams+crons) — each mapped to a borrowed pattern
    from claw-code/memory-mcp, adapted to ithacus's zero-external-service
    constraint.
-3. **Review `docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md`** — radcode doesn't exist;
-   the doc is likely stale. Mark for review or remove.
+3. **`docs/GAP_ANALYSIS_RADCODE_WORKFLOW.md` is accurate** — it already cited
+   the local `/mnt/data/git/RADOPENCODE/` clone correctly. Keep it; cross-link
+   this doc from it. (The GitHub URL `TheArchitectit/radcode` 404s — the repo
+   is local-only; don't try to fetch it over the network.)
 4. **Do NOT adopt memory-mcp's infra** (Postgres/Redis/Ollama) — PREVENT-ITH-004
    forbids external services. Borrow patterns only; implement on `node:sqlite`
    + in-process clustering.
