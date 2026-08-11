@@ -20,6 +20,12 @@ import { SwarmStore } from "../src/store-swarm.js";
 import { synthesize } from "../src/synthesis.js";
 import { executePlan } from "./ithacus-plan.js";
 import { discoverIthacusAgents } from "./ithacus-agents.js";
+import {
+  getLiveCardPreferredWidth,
+  getLiveCardWidthMode,
+  setLiveCardWidthMode,
+  toggleLiveCardWidthMode,
+} from "./ithacus-live-card.js";
 
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
@@ -115,6 +121,47 @@ export function registerTeamCommands(
     const mems = runtime.store.recall(repoId, undefined, 8);
     if (!mems.length) return "ithacus: no memories recorded for this repo.";
     return mems.map((m) => `[${m.kind}] ${m.text}`).join("\n");
+  });
+
+  // ---- /ithacus-live width ... (Sprint 5.13.1) ---------------------------
+  // Toggle/configure the live-progress card's width mode:
+  //   width [toggle]      → flip auto↔fixed (+ persist)
+  //   width auto|fixed    → set explicitly (+ persist)
+  //   width status        → report current mode + preferred width
+  //   (bare /ithacus-live)→ same as "width status"
+  // Persist via the repo ith_kv key "live_card_width_mode" when a runtime
+  // store exists; without one the module toggle still applies (session-only).
+  // NOTE: the spec's optional "clear" subcommand is intentionally NOT
+  // shipped — removeLive() needs per-dispatch ids which listLive() does not
+  // enumerate (AgentLive carries no id field), and ithacus-live.ts is
+  // spec-locked to the listLive addition only. Deviation reported upstream.
+  registerCmd("ithacus-live", async (args) => {
+    const parts = ((args as string)?.trim() ?? "").split(/\s+/).filter(Boolean);
+    const describe = (): string =>
+      `ithacus live card width: ${getLiveCardWidthMode()} (preferred ${getLiveCardPreferredWidth()})`;
+    const persist = (mode: "auto" | "fixed"): void => {
+      try {
+        runtime?.store?.setKv("live_card_width_mode", mode);
+      } catch {
+        /* persist is best-effort — the module toggle already took effect */
+      }
+    };
+    if (parts[0] === "width") {
+      const sub = parts[1];
+      if (sub === "auto" || sub === "fixed") {
+        setLiveCardWidthMode(sub);
+        persist(sub);
+        return describe();
+      }
+      if (sub === "status") return describe();
+      if (sub === undefined || sub === "toggle") {
+        const mode = toggleLiveCardWidthMode();
+        persist(mode);
+        return describe();
+      }
+      return 'usage: /ithacus-live width [auto|fixed|toggle|status]';
+    }
+    return describe(); // no arg → status
   });
 
   registerCmd("ithacus-profiles", async (_args, ctx) => {

@@ -376,6 +376,13 @@ export function getLive(id: string): AgentLive | undefined {
   return live.get(id);
 }
 
+/** Enumerate all live dispatches (active + recent terminal) for the
+ *  workflow section (DESIGN_LIVE_PROGRESS.md — agent-to-agent chain view).
+ *  Sorted by startedAt ascending (oldest first = execution order). */
+export function listLive(): AgentLive[] {
+  return [...live.values()].sort((a, b) => a.startedAt - b.startedAt);
+}
+
 export function onLiveChanged(fn: () => void): () => void {
   listeners.add(fn);
   return () => {

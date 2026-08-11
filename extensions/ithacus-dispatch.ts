@@ -56,7 +56,7 @@ import {
   getLive,
   setWorkerStatus,
 } from "./ithacus-live.js";
-import { IthLiveCard } from "./ithacus-live-card.js";
+import { IthLiveCard, getLiveCardPreferredWidth, loadLiveCardWidthMode } from "./ithacus-live-card.js";
 import { mapEventToStatus } from "../src/worker-status.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
@@ -117,6 +117,9 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
   // event bus — one event stream, many views (5.12 dashboard, 5.14 status,
   // fleet views subscribe later without touching producers).
   if (runtime) wireLiveEventBus(runtime.eventBus);
+  // Sprint 5.13.1: sync the persisted live-card width pref (ith_kv
+  // "live_card_width_mode") into the card module's widthMode at registration.
+  if (runtime?.store) loadLiveCardWidthMode((k) => runtime.store.getKv(k));
   const tool: ToolDefinition<typeof DispatchParams, DispatchDetails> = {
     name: "ithacus-dispatch",
     label: "ithacus dispatch",
@@ -161,8 +164,8 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
         startLive(dispatchId, agentType, params.model, taskPreview);
 
         // Sprint 5.13 §3.3 (2): show the live overlay IMMEDIATELY (before
-        // spawnAgent) — a bordered box, ithacus's own look, width 52,
-        // top-center. FIRE-AND-FORGET (never await ctx.ui.custom — awaiting
+        // spawnAgent) — a bordered box, ithacus's own look, at the dynamic
+        // preferred width (5.13.1's auto/fixed toggle), top-center. FIRE-AND-FORGET (never await ctx.ui.custom — awaiting
         // blocks the tool return and the overlay never composites during
         // tool execution, the v0.3.14/15 lesson). nonCapturing shows it
         // visually WITHOUT stealing keyboard focus; onHandle hands the card
@@ -176,7 +179,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             },
             {
               overlay: true,
-              overlayOptions: { width: 52, nonCapturing: true, anchor: "top-center", offsetY: 1 },
+              overlayOptions: { width: getLiveCardPreferredWidth(), nonCapturing: true, anchor: "top-center", offsetY: 1 },
               onHandle: (handle: { hide(): void }) => {
                 cardRef.current?.setHandle(handle);
               },

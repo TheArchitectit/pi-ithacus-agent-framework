@@ -596,6 +596,8 @@ try {
     check("live.startLive publishes run_started + spawning",
       published.some((e) => e.type === "run_started" && e.runId === liveId) &&
       published.some((e) => e.type === "agent_status" && e.runId === liveId && e.status === "spawning"));
+    // 5.13.1: listLive enumerates live dispatches (the ▌ workflow source).
+    check("live.listLive returns entries", liveMod.listLive().length >= 1);
 
     // parseJsonlLine tolerates the variance a child stdout can emit.
     check("live.parseJsonlLine blank null",
@@ -636,9 +638,15 @@ try {
       () => {}, // done hook (ctx.ui.custom would normally provide this)
       () => {}, // requestRender
     );
-    check("livecard width 52", card.width === 52);
+    check("livecard width dynamic (auto=120)", card.width === 120);
+    // 5.13.1 width toggle: fixed pins the preferred width at 88; restoring
+    // auto returns the 120 sentinel (pi reads component.width per new card).
+    liveCardMod.setLiveCardWidthMode("fixed");
+    check("livecard fixed width 88", card.width === 88);
+    liveCardMod.setLiveCardWidthMode("auto");
+    check("livecard auto width restored (120)", card.width === 120);
     card.setHandle({ hide: () => {} });
-    const runLines = card.render(52);
+    const runLines = card.render(100);
     check("livecard render returns boxed lines", Array.isArray(runLines) && runLines.length >= 8);
     const runText = runLines.join("\n");
     check("livecard render mentions worker agent", runText.includes("explore"));
@@ -648,6 +656,16 @@ try {
     // 5.14 (spec §2.3): the card's status row is the WorkerStatus icon+label
     // table — after the feeds above the run is ▸ working (was ⟳ running).
     check("livecard render running identity", runText.includes("ithacus —") && runText.includes("▸ working"));
+    // 5.13.1: the ▌ activity section renders the recentTools ring, one row
+    // per entry (the old calls/files rows folded in).
+    check("livecard activity section shows tool", card.render(100).join("\n").includes("read"));
+    // 5.13.1: the ▌ task section word-wraps — a long preview survives WHOLE
+    // (multi-line, never the old 40-char/… slice). Every word must appear
+    // SOMEWHERE in the wrapped render (old truncation would drop the tail).
+    const longTask = "Implement the live-card layout change plus smoke section updates for the width model enterprise layout";
+    liveMod.getLive(liveId).taskPreview = longTask;
+    const wrappedText = card.render(100).join("\n");
+    check("livecard task wraps (multi-line)", longTask.split(" ").every((w) => wrappedText.includes(w)));
 
     // endLive marks terminal + publishes agent_done/run_finished; the card
     // renders the success state; removeLive purges; render degrades plain.
@@ -658,11 +676,11 @@ try {
     check("live.endLive publishes agent_done + run_finished",
       published.some((e) => e.type === "agent_done" && e.runId === liveId && e.status === "done") &&
       published.some((e) => e.type === "run_finished" && e.runId === liveId && e.status === "done"));
-    check("livecard render at terminal state", card.render(52).join("\n").includes("✓ done"));
+    check("livecard render at terminal state", card.render(100).join("\n").includes("✓ done"));
     card.markDone(); // schedules the 3s auto-dismiss (dispose cancels it below)
     liveMod.removeLive(liveId);
     check("live.removeLive purges entry", liveMod.getLive(liveId) === undefined);
-    const goneLines = card.render(52);
+    const goneLines = card.render(100);
     check("livecard plain fallback when store purged",
       goneLines.length === 1 && goneLines[0].includes("ithacus"));
     card.dispose(); // stop timers so nothing lingers past the summary
@@ -711,10 +729,10 @@ try {
       check("live.5.14 no backward transition", back === "working");
       // the card renders the richer rows (icon+label per DESIGN_WORKER_STATUS.md §2.3)
       const rich = new liveCardMod.IthLiveCard({ fg: (_c, t) => t, bold: (t) => t }, richerId, () => {}, () => {});
-      check("live.5.14 card renders ▸ working", rich.render(52).join("\n").includes("▸ working"));
+      check("live.5.14 card renders ▸ working", rich.render(100).join("\n").includes("▸ working"));
       liveMod.setWorkerStatus(richerId, "tool_permission"); // working → tool_permission: the mid-run grant dip
       check("live.5.14 card renders 🔑 awaiting permission",
-        rich.render(52).join("\n").includes("🔑 awaiting permission"));
+        rich.render(100).join("\n").includes("🔑 awaiting permission"));
       rich.dispose();
       // spec §2.2: dies still blocked → permission_denied (not "unknown")
       liveMod.endLive(richerId, false, "child exited", { exitCode: 1 });

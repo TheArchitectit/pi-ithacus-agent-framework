@@ -1,14 +1,27 @@
 /**
  * ithacus-live-card.ts — the persistent live-progress overlay Component
- * (Sprint 5.13, docs/DESIGN_LIVE_PROGRESS.md §3.2 + §4).
+ * (Sprint 5.13, docs/DESIGN_LIVE_PROGRESS.md §3.2 + §4; enterprise layout in
+ * Sprint 5.13.1).
  *
  * Shown at dispatch START (before `await spawnAgent`, fire-and-forget),
  * reads the module-level store in ithacus-live.ts, re-renders on each
  * onLiveChanged() callback, and on completion flips to the terminal state
  * (✓ success / ✗ failed) and auto-dismisses after 3s.
  *
+ * Sprint 5.13.1 (enterprise layout): the 8-row squashed layout became
+ * multi-row WRAPPED sections — `▌ task` (word-wrapped, NO 40-char
+ * truncation), `▌ workflow` (the agent-to-agent chain from listLive(), the
+ * current dispatch highlighted), `▌ activity` (recentTools ring, one row
+ * per entry; the separate files/calls rows folded away). Width is a
+ * TOGGLABLE model ("auto" = clamp terminal width to 60..120 / "fixed" 88):
+ * `width` is now a GETTER returning getLiveCardPreferredWidth() so pi's
+ * `component.width` read (interactive-mode.js) picks up mode changes for
+ * new cards; persisted via the ith_kv key "live_card_width_mode" (loaded at
+ * registration by dispatch's loadLiveCardWidthMode call, toggled from
+ * /ithacus-live width).
+ *
  * Structural pi Component + Focusable (render/handleInput/invalidate/dispose
- * + readonly width + focused) — no pi-tui type import (PREVENT-ITH-004).
+ * + width getter + focused) — no pi-tui type import (PREVENT-ITH-004).
  * All constructor fields are declared explicitly (no parameter properties —
  * the Node strip-only test path rejects them; v0.3.11 lesson). Valid theme
  * colors ONLY: accent/success/error/muted/dim + warning (Sprint 5.14's
@@ -23,13 +36,14 @@
  * WorkerFailureKind when it's informative (≠ "unknown").
  */
 
-import { getLive, onLiveChanged, removeLive } from "./ithacus-live.js";
+import { getLive, listLive, onLiveChanged, removeLive } from "./ithacus-live.js";
+import type { AgentLive } from "./ithacus-live.js";
 import type { WorkerStatus } from "../src/events.js";
 import { isTerminalStatus } from "../src/worker-status.js";
 
 // ---------------------------------------------------------------------------
-// helpers (zero-dep — visibleWidth/truncateToWidth stay local; pi-tui's would
-// add a runtime dep — PREVENT-ITH-004, DESIGN_LIVE_PROGRESS.md §4)
+// helpers (zero-dep — visibleWidth/truncateToWidth/wrapText stay local;
+// pi-tui's would add a runtime dep — PREVENT-ITH-004, DESIGN_LIVE_PROGRESS.md §4)
 // ---------------------------------------------------------------------------
 
 interface ThemeLike {
@@ -48,6 +62,36 @@ function truncateToWidth(s: string, maxW: number): string {
   const stripped = s.replace(/\x1b\[[0-9;]*m/g, "");
   if (stripped.length <= maxW) return s;
   return stripped.slice(0, Math.max(0, maxW - 1)) + "…";
+}
+
+/** Word-wrap `text` into lines of at most `maxW` visible chars (Sprint
+ *  5.13.1 — the `▌ task` section wraps instead of the old 40-char slice).
+ *  ANSI-aware via the same strip pattern as visibleWidth; zero-dep. Words
+ *  longer than maxW are hard-split so a long URL/token can never blow the
+ *  box out. */
+function wrapText(text: string, maxW: number): string[] {
+  const stripped = text.replace(/\x1b\[[0-9;]*m/g, "");
+  const words = stripped.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0 || maxW <= 0) return [];
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of words) {
+    if (cur.length > 0 && cur.length + 1 + word.length <= maxW) {
+      cur += " " + word;
+      continue;
+    }
+    if (cur.length > 0) lines.push(cur);
+    // Start a fresh line with `word`, hard-splitting when it alone exceeds
+    // maxW (unbroken URLs/tokens).
+    let rest = word;
+    while (rest.length > maxW) {
+      lines.push(rest.slice(0, maxW));
+      rest = rest.slice(maxW);
+    }
+    cur = rest;
+  }
+  if (cur.length > 0) lines.push(cur);
+  return lines;
 }
 
 /** Compact human duration ("22m15s" | "12.4s" | "847ms"). Local copy: this
@@ -71,8 +115,60 @@ function tryFg(t: ThemeLike, color: string, text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// IthLiveCard — the persistent overlay (DESIGN_LIVE_PROGRESS.md §3.2 skeleton,
-// §4 layout: width 52, em-dash title, padEnd(7) label column, dim borders)
+// Sprint 5.13.1 — width model (auto ↔ fixed toggle, persisted in ith_kv)
+// ---------------------------------------------------------------------------
+
+export type LiveCardWidthMode = "auto" | "fixed";
+
+/** fixed mode: always render at 88 cols (narrower terminals clip to
+ *  terminal width — render() takes the min with what pi hands us). */
+const FIXED_WIDTH = 88;
+/** auto mode: follow the terminal width, clamped into [AUTO_MIN, AUTO_MAX].
+ *  AUTO_MAX is also the PREFERRED width pi reads via component.width. */
+const AUTO_MAX = 120;
+const AUTO_MIN = 60;
+/** ith_kv key the mode persists under (dispatch loads it at registration). */
+const LIVE_CARD_WIDTH_KV_KEY = "live_card_width_mode";
+
+let widthMode: LiveCardWidthMode = "auto";
+
+export function getLiveCardWidthMode(): LiveCardWidthMode {
+  return widthMode;
+}
+
+export function setLiveCardWidthMode(mode: LiveCardWidthMode): void {
+  if (mode === "auto" || mode === "fixed") widthMode = mode;
+}
+
+/** Flip auto ↔ fixed; returns the NEW mode (callers persist it). */
+export function toggleLiveCardWidthMode(): LiveCardWidthMode {
+  widthMode = widthMode === "auto" ? "fixed" : "auto";
+  return widthMode;
+}
+
+/** The width pi reads via `component.width` for overlay layout: AUTO_MAX in
+ *  auto mode (render still clamps to the actual terminal width), FIXED_WIDTH
+ *  in fixed mode. */
+export function getLiveCardPreferredWidth(): number {
+  return widthMode === "auto" ? AUTO_MAX : FIXED_WIDTH;
+}
+
+/** Load the persisted width pref from ith_kv (called once at extension
+ *  registration by registerDispatchTool). Best-effort: unreadable/unknown
+ *  values keep the "auto" default. */
+export function loadLiveCardWidthMode(getKv: (key: string) => string | null): void {
+  try {
+    const v = getKv(LIVE_CARD_WIDTH_KV_KEY);
+    if (v === "auto" || v === "fixed") widthMode = v;
+  } catch {
+    /* kv unavailable (no runtime store) — keep the default */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// IthLiveCard — the persistent overlay (DESIGN_LIVE_PROGRESS.md §3.2 skeleton;
+// Sprint 5.13.1 layout: dynamic width, em-dash title, padEnd(7) label column,
+// wrapped ▌ task / ▌ workflow / ▌ activity sections, dim borders)
 // ---------------------------------------------------------------------------
 
 /** Sprint 5.14 (DESIGN_WORKER_STATUS.md §2.3's icon/color table, verbatim). */
@@ -87,7 +183,6 @@ const STATUS_ROW: Readonly<Record<WorkerStatus, { icon: string; label: string; c
 };
 
 export class IthLiveCard {
-  readonly width = 52;
   focused = false;
 
   private t: ThemeLike;
@@ -103,6 +198,13 @@ export class IthLiveCard {
    *  unref'd interval. Cleared on markDone + dispose (never leaks, never
    *  holds the process). */
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Sprint 5.13.1: width is dynamic — pi reads `component.width` for
+   *  overlay layout (interactive-mode.js), so a getter lets the auto/fixed
+   *  toggle take effect on the NEXT card without a reload. */
+  get width(): number {
+    return getLiveCardPreferredWidth();
+  }
 
   /**
    * @param theme pi's theme (cast to ThemeLike; NO_THEME fallback)
@@ -204,7 +306,7 @@ export class IthLiveCard {
     this.dismiss();
   }
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     // DEFENSIVE: render() is called from pi's TUI render timer. An uncaught
     // throw crashes the whole process (v0.3.12 lesson: "Unknown theme color:
     // green"). Wrap EVERYTHING so a bad frame ALWAYS degrades to plain text.
@@ -214,7 +316,12 @@ export class IthLiveCard {
       const t = this.t;
       const fg = (color: string, text: string): string => tryFg(t, color, text);
 
-      const w = this.width;
+      // Sprint 5.13.1 width model: auto follows the terminal width clamped
+      // to [AUTO_MIN, AUTO_MAX]; fixed pins to FIXED_WIDTH (both take the
+      // min with what pi actually handed us so narrow terminals never overflow).
+      const w = widthMode === "auto"
+        ? Math.max(AUTO_MIN, Math.min(AUTO_MAX, width))
+        : Math.min(FIXED_WIDTH, width);
       const innerW = w - 2; // minus the two border chars
       const border = (s: string): string => fg("dim", s);
       const pad = (s: string, len: number): string =>
@@ -246,16 +353,61 @@ export class IthLiveCard {
           ? fg("error", statusText) + fg("muted", ` · ${fmtDuration(durMs)}`)
           : fg(st.color, statusText) + fg("muted", meta);
 
-      const tokensLine = fg("muted", `${snap.tokensIn} in · ${snap.tokensOut} out`);
+      // Tokens row carries the files count (5.13.1: the separate calls/files
+      // rows folded into ▌ activity — the count is the compact remnant).
+      const filesCount = snap.filesAccessed.length;
+      const tokensLine = fg(
+        "muted",
+        `${snap.tokensIn} in · ${snap.tokensOut} out` + (filesCount > 0 ? ` · ${filesCount} files` : ""),
+      );
       const toolLine = fg(
         "muted",
         snap.currentTool
           ? `${snap.currentTool}${snap.currentToolArgs ? ` (${truncateToWidth(snap.currentToolArgs, innerW - 18)})` : ""}`
           : "idle",
       );
-      const callsLine = fg("muted", `${snap.toolCallCount} tools · ${snap.filesAccessed.length} files`);
-      const filesLine = fg("muted", truncateToWidth(snap.filesAccessed.join(", "), innerW - 10));
-      const taskLine = fg("muted", truncateToWidth(snap.taskPreview ?? "", innerW - 10));
+
+      const lines: string[] = [];
+      lines.push(row(label("status") + " " + statusLine));
+      lines.push(row(label("tokens") + " " + tokensLine));
+      lines.push(row(label("tool") + " " + toolLine));
+
+      // ▌ task — word-wrapped over the full width, NO truncation (5.13.1).
+      if (snap.taskPreview) {
+        lines.push(row(fg("accent", "▌ task")));
+        for (const ln of wrapText(snap.taskPreview, innerW - 2)) {
+          lines.push(row(fg("muted", "  " + ln)));
+        }
+      }
+
+      // ▌ workflow — the agent-to-agent chain (listLive: every live
+      // dispatch, execution order). Up to 6 most-recent entries; the CURRENT
+      // dispatch is highlighted in its status color, the rest dimmed.
+      const chain = listLive();
+      if (chain.length > 0) {
+        lines.push(row(fg("accent", "▌ workflow")));
+        const shown: AgentLive[] = chain.length <= 6 ? chain : chain.slice(-6);
+        for (const entry of shown) {
+          const est = STATUS_ROW[entry.status] ?? STATUS_ROW.spawning;
+          const eDur = isTerminalStatus(entry.status) ? entry.durationMs : Math.max(0, Date.now() - entry.startedAt);
+          const line = truncateToWidth(
+            `${entry.agent.padEnd(12)}${est.icon} ${est.label.padEnd(8)}${fmtDuration(eDur)}`,
+            innerW - 3,
+          );
+          // Identity match: snap IS the map object for this.dispatchId.
+          lines.push(row(entry === snap ? fg(est.color, "  " + line) : fg("dim", "  " + line)));
+        }
+      }
+
+      // ▌ activity — the recentTools ring, one row per entry (the old
+      // files/calls rows fold in: each row already shows its file via args).
+      if (snap.recentTools.length > 0) {
+        lines.push(row(fg("accent", "▌ activity")));
+        for (const tool of snap.recentTools) {
+          const body = tool.tool.padEnd(6) + " " + truncateToWidth(tool.args, innerW - 10);
+          lines.push(row(fg("muted", "  " + body)));
+        }
+      }
 
       // Top border with em-dash title: `ithacus — <agent>[ · <model>]`.
       const modelSuffix = snap.model ? ` · ${snap.model}` : "";
@@ -275,12 +427,7 @@ export class IthLiveCard {
           fg("accent", titleText) +
           border("─".repeat(rightBorder) + "╮"),
         emptyRow(),
-        row(label("status") + " " + statusLine),
-        row(label("tokens") + " " + tokensLine),
-        row(label("tool") + " " + toolLine),
-        row(label("calls") + " " + callsLine),
-        row(label("files") + " " + filesLine),
-        row(label("task") + " " + taskLine),
+        ...lines,
         emptyRow(),
         border("╰" + "─".repeat(hintLeft)) + fg("dim", hintText) + border("─".repeat(hintRight) + "╯"),
       ];
