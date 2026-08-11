@@ -120,7 +120,8 @@ Rules live in `.guardrails/prevention-rules/pattern-rules.json`. Two families:
 ABSOLUTE PROHIBITIONS:
 FILE:      Modify outside scope | delete without permission | change permissions
 CODE:      Add logging/debug to prod | "clean up" surrounding code |
-           update versions unrequested | modify auth without review
+           update versions unrequested (esp. package.json version — owned
+           exclusively by scripts/deploy.sh) | modify auth without review
 GIT:       Force push | delete branches | modify hooks/config | push w/o permission
 SYSTEM:    Run servers/long services | commands needing input | network to unknown
            endpoints | install deps w/o permission | elevated privileges | modify env vars

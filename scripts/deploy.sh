@@ -36,6 +36,17 @@
 #
 # Exit codes: non-zero on any failure (set -euo pipefail). Nothing is published
 # if any step fails.
+#
+# VERSION OWNERSHIP (non-negotiable — the v0.6.1 lesson):
+#   deploy.sh owns the ONLY version bump. Step 3 bumps package.json+lockfile,
+#   step 4 commits it as `chore(release): vX.Y.Z`, step 5 tags THAT commit.
+#   DO NOT bump package.json in a sprint/feature commit — if the tree is
+#   already at the target version and HEAD is not the chore(release) commit
+#   for that version, step 3 REFUSES (the tag would land on a non-release
+#   commit). Sprint work changes code only; deploy.sh owns the version +
+#   release commit + tag. Step 4 exports ITHACUS_RELEASE_BUMP=1 around its
+#   `git commit` so the regression gate's staged-version-field block
+#   (scripts/regression_check.py) exempts the release commit.
 
 set -euo pipefail
 
@@ -149,8 +160,24 @@ shopt -u nullglob
 echo "[deploy] npm payload verified (dist/extensions + all extensions/agents/*.md present)."
 
 # --- 3. bump version ----------------------------------------------------------
+# Belt-and-braces (v0.6.1 lesson): if the tree is already at the target
+# version, the ONLY legitimate path is resuming after a publish failure
+# where HEAD IS the chore(release) commit for this version. Otherwise a
+# feature commit pre-bumped package.json and deploy.sh would skip its own
+# release commit → the tag lands on a non-release commit. Refuse and tell
+# the user to let deploy.sh own the bump.
 if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
-	echo "[deploy] package.json already at v$NEW_VERSION."
+	HEAD_SUBJECT=$(git log -1 --pretty=%s 2>/dev/null || true)
+	if [[ "$HEAD_SUBJECT" == "chore(release): v${NEW_VERSION}"* ]]; then
+		echo "[deploy] resuming at v$NEW_VERSION (HEAD is the release commit)."
+	else
+		echo "[deploy] ERROR: package.json already at v$NEW_VERSION but HEAD is not a" >&2
+		echo "[deploy]        chore(release) commit for this version. A feature commit" >&2
+		echo "[deploy]        likely pre-bumped the version (the v0.6.1 lesson)." >&2
+		echo "[deploy]        Revert the version change in package.json and run" >&2
+		echo "[deploy]        '$0' with NO args so deploy.sh owns the bump + release commit." >&2
+		exit 1
+	fi
 else
 	echo "[deploy] bumping package.json $CURRENT_VERSION → $NEW_VERSION (incl. package-lock.json)"
 	npm version "$NEW_VERSION" --no-git-tag-version
@@ -159,13 +186,17 @@ fi
 # --- 4. commit version bump --------------------------------------------------
 # package-lock.json IS committed (CI's `npm ci` requires it). npm version bumps
 # its version field too, so stage it whenever it exists.
+# ITHACUS_RELEASE_BUMP=1 around the commit exempts it from the regression
+# gate's staged-version-field block (scripts/regression_check.py refuses
+# package.json "version" changes outside a release context — the v0.6.1
+# lesson). Only deploy.sh sets this env var.
 if git diff --quiet -- package.json; then
 	echo "[deploy] nothing to commit (version already set)."
 else
 	echo "[deploy] committing version bump"
 	git add package.json
 	[[ -f package-lock.json ]] && git add package-lock.json
-	git commit -m "chore(release): v$NEW_VERSION
+	ITHACUS_RELEASE_BUMP=1 git commit -m "chore(release): v$NEW_VERSION
 
 Release v$NEW_VERSION published via scripts/deploy.sh.
 

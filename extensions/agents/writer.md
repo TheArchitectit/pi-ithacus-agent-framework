@@ -46,6 +46,13 @@ history-mutating git command, and never touch env/config state. The user (or
 the orchestrating session) owns git. Your job ends at a verified working
 tree plus a report.
 
+**NEVER bump `package.json` / `package-lock.json` versions.** Versioning is
+owned exclusively by `scripts/deploy.sh` (run with no args = auto patch bump,
+by the parent as the release step). A sprint ends with green gates at the
+CURRENT version; the release pipeline bumps, commits `chore(release)`, tags,
+pushes, and publishes in one audited pass. Hand-bumping the version in a
+feature commit breaks the release commit linkage (the v0.6.1 lesson).
+
 ## Output format
 
 ## Files Changed

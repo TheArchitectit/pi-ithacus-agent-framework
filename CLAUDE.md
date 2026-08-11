@@ -74,8 +74,16 @@ them as authoritative and do not re-introduce such references.
   strips TS types natively — no `tsc` install needed). `npm run build` (tsc) is
   optional for type-checking only.
 - **Versions**: one PATCH step per sprint (0.6.0 → 0.6.1 → …). Minor bumps
-  only for declared milestones. `scripts/deploy.sh` without args does this
-  automatically (auto patch bump).
+  only for declared milestones. **Version fields are owned exclusively by
+  `scripts/deploy.sh`** — feature/sprint commits NEVER touch `package.json`
+  version.
+- **Releases**: ALWAYS `scripts/deploy.sh` with **no args** (auto patch
+  bump). It runs the full audit in sequence — registry preflight → clean
+  tree → full gate → bundle validation + payload verify → version bump →
+  `chore(release)` commit → tag + push → publish → GitHub release. Never
+  publish via partial manual sequences, never hand-bump a version first
+  (the v0.6.1 lesson: a pre-bumped tree makes deploy skip its release
+  commit and the tag lands on a docs commit).
 - **Commits**: one focused commit per task; AI-attribution REQUIRED
   (`Co-Authored-By: Claude <noreply@anthropic.com>` — see
   `docs/workflows/COMMIT_WORKFLOW.md`).

@@ -233,6 +233,46 @@ def load_prevention_rules(rules_path: Path) -> List[Dict]:
     return rules
 
 
+# ---------------------------------------------------------------------------
+# Staged version-field block (v0.6.1 lesson). Refuses a staged package.json
+# "version" change outside a release context. deploy.sh step 4 sets
+# ITHACUS_RELEASE_BUMP=1 around its chore(release) commit, which exempts it.
+# A feature commit that pre-bumps the version makes deploy.sh skip its
+# chore(release) commit and the tag lands on a non-release commit.
+# ---------------------------------------------------------------------------
+
+def check_staged_version_field() -> List[str]:
+    """Block staged package.json 'version' field changes outside a release
+    context. Exempt when ITHACUS_RELEASE_BUMP=1 (set by deploy.sh step 4)."""
+    if os.environ.get("ITHACUS_RELEASE_BUMP") == "1":
+        return []  # release context — deploy.sh owns this commit
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--", "package.json"],
+            capture_output=True, text=True
+        )
+    except FileNotFoundError:
+        return []  # git unavailable — skip
+    if result.returncode != 0:
+        return []  # not in a repo or git error — skip
+    problems: List[str] = []
+    for line in result.stdout.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            content = line[1:]
+            if re.match(r'^\s*"?version"?\s*:', content):
+                problems.append(
+                    'package.json: staged change to the "version" field outside '
+                    'a release context. Version bumps are owned exclusively by '
+                    'scripts/deploy.sh (it bumps, commits chore(release), tags, '
+                    "and publishes in one audited pass). Revert the version "
+                    "change in your feature commit and run 'scripts/deploy.sh' "
+                    "with no args. (If this IS a release commit, it must be made "
+                    "by deploy.sh, which sets ITHACUS_RELEASE_BUMP=1.)"
+                )
+                break
+    return problems
+
+
 def check_file_against_failures(
     file_path: str,
     failures: List[Dict]
@@ -479,6 +519,16 @@ Examples:
     if bundle_problems:
         _print_agent_bundle_problems(bundle_problems, stream=sys.stderr if args.json else None)
 
+    # v0.6.1 lesson: block staged package.json "version" field changes
+    # outside a release context (ITHACUS_RELEASE_BUMP=1 exempts deploy.sh's
+    # own chore(release) commit).
+    version_problems = check_staged_version_field()
+    if version_problems:
+        stream = sys.stderr if args.json else None
+        print("\n\u2717 Staged version-field change blocked:", file=stream or sys.stdout)
+        for p in version_problems:
+            print(f"  - {p}", file=stream or sys.stdout)
+
     # Run check
     count, issues = run_regression_check(
         registry_path=args.registry,
@@ -500,7 +550,7 @@ Examples:
     # Exit code — bundle validation failures ALWAYS fail the gate (even
     # without --pre-commit); regression findings stay advisory unless
     # --pre-commit is passed (historical behavior).
-    if bundle_problems:
+    if bundle_problems or version_problems:
         sys.exit(1)
     if args.pre_commit and count > 0:
         sys.exit(1)

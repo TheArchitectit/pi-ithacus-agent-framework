@@ -17,6 +17,14 @@ staged `.env` files).
    contents, DB connection strings → block immediately.
 5. **Pre-commit requirements:** all relevant tests pass, `npm run guardrails`
    is clean, no lint errors.
+6. **Version fields are NOT yours.** NEVER bump `package.json` or
+   `package-lock.json` `"version"` in a sprint/feature commit. Versioning
+   is owned exclusively by `scripts/deploy.sh` (run with no args = auto
+   patch bump, by the parent as the release step). The regression gate
+   blocks staged `package.json` "version" changes outside a release commit
+   (exempted via `ITHACUS_RELEASE_BUMP=1`, set only by deploy.sh). A
+   pre-bumped tree makes deploy skip its `chore(release)` commit and the
+   tag lands on a non-release commit (the v0.6.1 lesson).
 
 ## Commit message format
 
