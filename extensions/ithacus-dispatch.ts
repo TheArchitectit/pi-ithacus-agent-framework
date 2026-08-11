@@ -167,18 +167,28 @@ function fmtDuration(ms: number): string {
 // ---------------------------------------------------------------------------
 // IthDispatchCard — a real pi TUI overlay Component (task #25 polish).
 //
-// Visual identity: ithacus's OWN look, not a clone of pi-crew or any other
-// extension. The overlay MECHANISM (ctx.ui.custom) is pi's platform API —
-// shared by necessity — but the RENDER is ithacus's established visual
-// language, deliberately consistent with /ithacus-menu: borderless (no
-// box-drawing), em-dash title, aligned label columns, accent for model,
-// muted for meta, green/red for status. pi-crew has its own branding; this
-// is ithacus's.
+// Visual identity: ithacus's OWN look, not a clone of pi-messenger or any
+// other extension. The overlay MECHANISM (ctx.ui.custom) is pi's platform
+// API — shared by necessity — but the RENDER is ithacus's own bordered box
+// with its own layout, dimensions, and color hierarchy. pi-messenger's
+// config-overlay has its own branding; this is ithacus's.
 //
-// Why a Component and not ANSI-in-text: pi's tool-result text renderer ESCAPES
-// ANSI (shows literal [1m etc.), but a Component's render() output passes ANSI
-// through (pi strips it for width calc). So theme colors + the overlay popup
-// only work via ctx.ui.custom({ overlay: true }) + a Component.
+// Why a bordered box Component and not ANSI-in-text: pi's tool-result text
+// renderer ESCAPES ANSI (shows literal [1m etc.), but a Component's render()
+// output passes ANSI through (pi strips it for width calc). A bordered box
+// is also VISIBLE against the busy TUI during tool execution — a borderless
+// 3-line card blends into the chat and is invisible (the v0.3.13/14 bug).
+//
+// Key fixes vs v0.3.14 (which never showed):
+//   1. readonly width + focused (Focusable) — the overlay system uses these.
+//   2. overlayOptions: { nonCapturing: true } — shows visually WITHOUT
+//      stealing keyboard focus from the chat during tool execution. A
+//      capturing overlay during a tool's execute() is likely blocked by pi.
+//   3. Fire-and-forget (don't await ctx.ui.custom) — execute() returns the
+//      result immediately; the overlay shows as a side effect. Awaiting
+//      blocks the tool return and the overlay never composites.
+//   4. onHandle → handle.hide() for auto-dismiss — more reliable than done().
+//   5. visibleWidth-aware padding — ANSI colors don't break alignment.
 // ---------------------------------------------------------------------------
 
 interface ThemeLike {
@@ -187,7 +197,24 @@ interface ThemeLike {
 }
 const NO_THEME: ThemeLike = { fg: (_c, t) => t, bold: (t) => t };
 
+/** Strip ANSI escape codes for display-width calculation. Zero-dep (we can't
+ *  import visibleWidth from pi-tui without adding a runtime dep — PREVENT-ITH-004). */
+function visibleWidth(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+/** Truncate a string to a max VISIBLE width (ANSI-aware). Zero-dep. */
+function truncateToWidth(s: string, maxW: number): string {
+  const stripped = s.replace(/\x1b\[[0-9;]*m/g, "");
+  if (stripped.length <= maxW) return s;
+  return stripped.slice(0, Math.max(0, maxW - 1)) + "…";
+}
+
 class IthDispatchCard {
+  // Explicit width — the overlay system uses this for sizing (pi-messenger's
+  // config-overlay sets readonly width = 60). ithacus's own choice: 52.
+  readonly width = 52;
+  // Focusable interface — pi-tui overlays expect a `focused` field.
+  focused = false;
   private t: ThemeLike;
   private status: "running" | "success" | "failed" = "running";
   private model?: string;
@@ -201,6 +228,8 @@ class IthDispatchCard {
   private taskPreview: string;
   private done: (v: null) => void;
   private requestRender: () => void;
+  // Overlay handle for reliable dismissal via handle.hide() (set by onHandle).
+  private handle: { hide(): void } | null = null;
 
   constructor(
     theme: unknown,
@@ -232,19 +261,30 @@ class IthDispatchCard {
     this.safeRender();
   }
 
-  /** Mark done + auto-dismiss after a beat so the user sees the result. */
+  /** Mark done. Auto-dismiss is handled by onHandle in execute() via
+   *  handle.hide() — more reliable than a done()-based timer (the v0.3.14
+   *  bug: the timer fired but the overlay was never visible in the first
+   *  place because the factory threw or the overlay was never composited). */
   setDone(success: boolean, durationMs: number, exitCode: number, model?: string): void {
     this.status = success ? "success" : "failed";
     this.durationMs = durationMs;
     this.exitCode = exitCode;
     if (model) this.model = model;
     this.safeRender();
-    setTimeout(() => this.dismiss(), 3000);
   }
 
-  private dismiss(): void {
+  /** Store the overlay handle for reliable dismissal (set from onHandle). */
+  setHandle(handle: { hide(): void }): void {
+    this.handle = handle;
+  }
+
+  /** Public so the onHandle auto-hide timer in execute() can call it.
+   *  Calls handle.hide() (removes overlay visually) + done(null) (resolves
+   *  the custom() promise). Idempotent — safe to call multiple times. */
+  dismiss(): void {
     if (this.dismissed) return;
     this.dismissed = true;
+    try { this.handle?.hide(); } catch { /* already hidden */ }
     try { this.done(null); } catch { /* already dismissed */ }
   }
 
@@ -268,22 +308,47 @@ class IthDispatchCard {
       };
       const modelStr = this.model ?? "resolving…";
       const dur = this.durationMs > 0 ? fmtDuration(this.durationMs) : "running…";
-      // Valid pi theme fg colors: accent, success, error, warning, muted, dim.
-      // (NOT green/red — those throw `Unknown theme color` and crash pi.)
       const statusText =
         this.status === "running" ? fg("accent", "⟳ running")
         : this.status === "success" ? fg("success", "✓ success")
         : fg("error", `✗ failed (exit ${this.exitCode})`);
-      // ithacus's own visual language — mirrors /ithacus-menu: borderless,
-      // em-dash title (like `ithacus v0.3.11 — status`), aligned label columns
-      // (like the menu's padded agent rows), accent for model, muted for meta.
-      // `·` is the inline stat separator (like the menu's `crew … · turn …`).
+
+      // ithacus's OWN bordered-box look — distinct from pi-messenger's
+      // config-overlay (which uses a different layout, width=60, and content).
+      // ithacus: width=52, em-dash title in top border, aligned label columns,
+      // accent for model, success/error for status, muted for meta + task.
+      const w = this.width;
+      const innerW = w - 2; // minus the two border chars
+      const border = (s: string): string => fg("dim", s);
+      const pad = (s: string, len: number): string => s + " ".repeat(Math.max(0, len - visibleWidth(s)));
+      const row = (content: string): string => border("│") + pad(" " + content, innerW) + border("│");
+      const emptyRow = (): string => border("│") + " ".repeat(innerW) + border("│");
+
+      // Top border with em-dash title (ithacus — <role>), centered.
+      const titleText = ` ithacus — ${this.agentType} `;
+      const borderLen = innerW - visibleWidth(titleText);
+      const leftBorder = Math.floor(borderLen / 2);
+      const rightBorder = borderLen - leftBorder;
+
+      // Content rows: aligned label columns (model/status/task), ithacus's
+      // own convention matching /ithacus-menu's padded rows.
       const label = (s: string): string => s.padEnd(7);
+      const taskTrunc = truncateToWidth(this.taskPreview, innerW - 10);
+
+      // Bottom border with hint text.
+      const hintText = " auto-dismiss · any key to close ";
+      const hintBorderLen = innerW - visibleWidth(hintText);
+      const hintLeft = Math.floor(hintBorderLen / 2);
+      const hintRight = hintBorderLen - hintLeft;
+
       return [
-        bold(`ithacus — ${this.agentType}`),
-        `  ${label("model")} ${fg("accent", modelStr)}`,
-        `  ${label("status")} ${statusText} ${fg("muted", `· ${dur}`)}`,
-        `  ${label("task")} ${fg("muted", this.taskPreview)}`,
+        border("╭" + "─".repeat(leftBorder)) + fg("accent", titleText) + border("─".repeat(rightBorder) + "╮"),
+        emptyRow(),
+        row(`${label("model")} ${fg("accent", truncateToWidth(modelStr, innerW - 10))}`),
+        row(`${label("status")} ${statusText} ${fg("muted", `· ${dur}`)}`),
+        row(`${label("task")} ${fg("muted", taskTrunc)}`),
+        emptyRow(),
+        border("╰" + "─".repeat(hintLeft)) + fg("dim", hintText) + border("─".repeat(hintRight) + "╯"),
       ];
     } catch {
       // Last-resort plain text — never crash the host TUI.
@@ -595,33 +660,38 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // result renderer see what actually ran, not just the prose.
       const modelStr = res.model ? `${res.model}${res.provider ? `@${res.provider}` : ""}` : "default";
       const dur = fmtDuration(res.durationMs);
-      // Pop a REAL overlay popup (task #25 polish): theme-colored green/red,
-      // dismissible, auto-fades after ~1.8s. ithacus's own visual identity —
-      // the `ithacus — <role>` em-dash title (matching /ithacus-menu) +
-      // aligned label columns + theme colors, rendered by pi's overlay system
-      // (not ANSI hacks that pi escapes). Borderless, like the menu.
-      // Best-effort: if pi blocks overlays during tool execution, the clean
-      // text result below still carries the info.
+      // Pop a REAL overlay popup — a bordered box (ithacus's own look).
+      // FIRE-AND-FORGET (don't await ctx.ui.custom): execute() returns the
+      // result immediately; the overlay shows as a side effect. Awaiting
+      // blocks the tool return and the overlay never composites during tool
+      // execution (the v0.3.14 bug). nonCapturing: true shows the overlay
+      // visually WITHOUT stealing keyboard focus from the chat — a capturing
+      // overlay during a tool's execute() is likely blocked by pi. onHandle
+      // auto-hides via handle.hide() + done() after 3s. Best-effort: if pi
+      // blocks overlays entirely, the text result below still carries the info.
       try {
-        await ctx.ui.custom<null>(
+        let cardRef: IthDispatchCard | null = null;
+        ctx.ui.custom<null>(
           (_tui, theme, _kb, done) => {
-            const card = new IthDispatchCard(
+            cardRef = new IthDispatchCard(
               theme, res.agent,
               params.task.slice(0, 80) + (params.task.length > 80 ? "…" : ""),
               done, () => _tui.requestRender(),
             );
-            // DEFER setDone to the next tick: the factory runs BEFORE the TUI
-            // has mounted the overlay, so calling setDone (→ requestRender)
-            // synchronously here can lose the render or throw if the TUI is
-            // busy after a long dispatch (the v0.3.13 "no popup" bug). 50ms
-            // gives pi time to mount the overlay component first.
-            setTimeout(() => {
-              card.setDone(res.success, res.durationMs, res.exitCode, modelStr === "default" ? undefined : modelStr);
-            }, 50);
-            return card;
+            cardRef.setDone(res.success, res.durationMs, res.exitCode, modelStr === "default" ? undefined : modelStr);
+            return cardRef;
           },
-          { overlay: true },
-        );
+          {
+            overlay: true,
+            overlayOptions: { width: 52, nonCapturing: true, anchor: "top-center", offsetY: 1 },
+            onHandle: (handle: { hide(): void }) => {
+              if (cardRef) cardRef.setHandle(handle);
+              // Auto-dismiss after 3s: handle.hide() removes the overlay,
+              // dismiss() calls done(null) to resolve the custom() promise.
+              setTimeout(() => { cardRef?.dismiss(); }, 3000);
+            },
+          },
+        ).catch(() => { /* fire-and-forget — ignore resolution errors */ });
       } catch { /* overlay best-effort — never block the tool result */ }
       // Clean plain-text result for the tool card (pi renders this natively;
       // no ANSI/box — those render as literal escapes in tool-result text).
