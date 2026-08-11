@@ -534,15 +534,21 @@ Goal: close every agent-workflow gap found across radcode, radical, and memory-m
 
 **Approval required**: Yes
 
-### Sprint 5.9 — A2A Protocol Adapter (extensions/, network-gated) (2-3 weeks)
+### Sprint 5.9 — A2A Protocol Adapter (extensions/, network-gated — re-scoped as Tier R) (2-3 weeks)
 
-**Features**: 4.31 A2A HTTP/JSON-RPC, 4.32 SSE streaming, 4.33 HMAC webhooks, 4.34 Agent Card discovery, 4.35 Federation multi-node
+**Status**: 📋 SPEC — re-scoped under `docs/DESIGN_OPTIN_ENTERPRISE.md` §A;
+blocked on Sprint 5.24 (two-tier policy gate) landing first
 
-**Scope**: `extensions/ithacus-a2a.ts` — real network A2A (PREVENT-ITH-004 exception annotated, like search.ts). Wires src/ negotiation/handoff/bus/task-lifecycle to remote agents.
+**Features**: A2A v0.3.0 wire surface — AgentCard at `/.well-known/agent-card.json`,
+JSON-RPC 2.0 over HTTP(S) (`message/send`), SSE streaming (`message/stream`),
+`tasks/get`/`tasks/cancel`, Bearer/OAuth2/API-key auth (defer gRPC)
 
-**Dependencies**: Sprints 5.1, 5.3, 5.4, 5.6.
+**Scope**: `extensions/opt-in/a2a-server.ts` + `a2a-client.ts`. Bridges A2A
+messages ↔ local `ith_inbox` so remote peers look identical to local ones.
+Loopback-only tests; mesh exposure deferred to Sprint 5.26. Anti-pattern
+guard: no no-op dispatch stubs (memory-mcp lesson).
 
-**Approval required**: Yes — first network extension since TIER 3 search.ts.
+**Dependencies**: Sprint 5.24 (two-tier gate); Sprints 5.1, 5.3, 5.4, 5.6.
 
 ---
 
@@ -724,6 +730,91 @@ mutating roles execute concurrently; Sprints 5.13/5.20 recommended for live
 visibility.
 
 **Approval required**: Yes — schema migration and dispatch semantics change.
+
+---
+
+## TIER 6: FULL ENTERPRISE — WEB UI, TWO-TIER POLICY & OPT-IN REMOTE (2026 landscape response)
+
+> Response to `docs/GAP_ANALYSIS_2026_LANDSCAPE.md`: ithacus v1.0 = local-first
+> enterprise harness + opt-in fleet. Tier L stays pristine (PREVENT-ITH-004);
+> Tier R (remote) ships default-OFF behind setup-panel toggles.
+
+### Sprint 5.22: Live A2A Accounting
+
+**Status**: 📋 SPEC NEEDED (gap identified — peer-to-peer traffic not yet
+live-accounted)
+
+**Scope**: Emit `message_sent`/`message_read`/`handoff_initiated`/
+`handoff_accepted` events onto the existing eventBus from mailbox + handoff
+paths; add `▌ inbox` and `▌ handoffs` sections to the live card (the 5.13.1
+layout made the card section-extensible); wire `src/presence.ts` fleet state
+into the workflow view. Peer-to-peer becomes visible, not just parent→child
+dispatch.
+
+**Dependencies**: 5.13/5.14 (event bus, worker status, card layout).
+
+---
+
+### Sprint 5.23: Web Interface & Setup Panel
+
+**Status**: 📋 SPEC — `docs/DESIGN_WEB_INTERFACE.md`
+
+**Scope**: Local-first web UI on `node:http`, loopback-only (127.0.0.1,
+default port 7447), bundled static assets (no CDN/deps), SSE fed from the
+eventBus. Views: Dashboard, Live dispatch detail, Inbox, **Setup panel**
+(agent models via `discoverIthacusAgents()`, Tier R toggles, limits, about),
+Guardrails readout. Setup panel is THE toggle surface for all opt-in remote
+capabilities. Observe + configure in v1; no agent control buttons.
+
+**Dependencies**: Sprint 5.24 first (config schema + capability gate the
+panel writes into).
+
+---
+
+### Sprint 5.24: Two-Tier Trust & Connectivity Policy
+
+**Status**: 📋 SPEC — `docs/DESIGN_TWO_TIER_POLICY.md`
+
+**Scope**: Evolve PREVENT-ITH-004 into explicit tiers. Tier L (local, always
+on, scan-enforced as today). Tier R (`extensions/opt-in/`, default OFF):
+scanner honors `guardrails-allow PREVENT-ITH-004` annotations ONLY in that
+subtree; every opt-in file must self-declare; new PREVENT-ITH-005 forbids
+non-opt-in code importing opt-in modules without the capability gate.
+`RemoteCapabilities` config (master switch + per-capability toggles, env >
+project config > defaults-all-off). `extensions/opt-in/gate.ts` runtime gate.
+No network code ships in this sprint — policy + scanner + config only.
+
+**Dependencies**: None (foundation).
+
+---
+
+### Sprint 5.25: External Memory Tier (opt-in)
+
+**Status**: 📋 SPEC — `docs/DESIGN_OPTIN_ENTERPRISE.md` §B
+
+**Scope**: Opt-in `MemoryBackend` adapter (Postgres + pgvector reference
+impl, DSN via env only, local Ollama embeddings in v1). Augments — never
+replaces — sqlite hindsight. Consolidation hooks into Sprint 5.18. Avoids
+memory-mcp anti-patterns (compacted-text embedding, inverted scores,
+prefix-truncated IDs).
+
+**Dependencies**: Sprint 5.18 (consolidation pipeline), Sprint 5.24 (gate).
+
+---
+
+### Sprint 5.26: Fleet Mesh (opt-in)
+
+**Status**: 📋 SPEC — `docs/DESIGN_OPTIN_ENTERPRISE.md` §C
+
+**Scope**: Ride BYO Tailscale-class mesh (ithacus ships no mesh of its own).
+Peer registry via AgentCards over mesh DNS, presence heartbeats, routing via
+the Sprint 5.9 A2A client. Loopback A2A server binds to mesh interface only
+when mesh enabled + peer allowlist. No libp2p/custom NAT/own PKI.
+
+**Dependencies**: Sprint 5.9 (A2A adapter), Sprint 5.24 (gate).
+
+**Approval required**: Yes — all three remote sprints (5.9-rework, 5.25,
+5.26) require explicit approval per their Tier R status.
 
 ---
 

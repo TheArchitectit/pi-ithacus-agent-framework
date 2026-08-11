@@ -28,6 +28,20 @@
 | **5.20** | `DESIGN_EVENT_STREAM.md` | One typed event stream, many views (overlay + dashboard + fleet view share one bus); layer into 5.13 from day one | radcode stream protocol |
 | **5.21** | `DESIGN_TEAMS_AND_SIZES.md` | Named presets with discovered agent types, explicit role/slot composition, configurable size bounds, model/provider assignment, and bounded parallel dispatch | claw-code `expand_team_mode()` + TeamRegistry, adapted to ithacus |
 
+## TIER 6 — Full Enterprise (specs written 2026-08-11, response to `GAP_ANALYSIS_2026_LANDSCAPE.md`)
+
+| Sprint | Spec | What it delivers | Tier |
+|---|---|---|---|
+| **5.24** | `DESIGN_TWO_TIER_POLICY.md` | Two-tier trust model: Tier L local (scan-enforced) / Tier R `extensions/opt-in/` default-OFF; capability gate; PREVENT-ITH-005 boundary rule | foundation |
+| **5.23** | `DESIGN_WEB_INTERFACE.md` | Localhost web UI + setup panel on `node:http` (loopback, SSE from eventBus, bundled assets); THE toggle surface for Tier R | default-local |
+| **5.9-R** | `DESIGN_OPTIN_ENTERPRISE.md` §A | A2A v0.3.0 adapter: AgentCard, JSON-RPC `message/send`/`message/stream` SSE, `tasks/get`/`cancel` — bridges to local `ith_inbox` | opt-in-remote |
+| **5.25** | `DESIGN_OPTIN_ENTERPRISE.md` §B | External memory tier (Postgres+pgvector adapter, local Ollama embeddings); augments sqlite hindsight, never replaces | opt-in-remote |
+| **5.26** | `DESIGN_OPTIN_ENTERPRISE.md` §C | Fleet mesh over BYO Tailscale: AgentCard peer registry, presence heartbeats, A2A routing | opt-in-remote |
+
+Ordering: **5.24 first** (gate + config schema), then **5.23** (toggle surface),
+then 5.9-R / 5.25 / 5.26 behind toggles. 5.22 (live A2A accounting) lands on
+the 5.13/5.20 event-bus foundation and has no dependency on Tier R.
+
 ## Recommended build order & rationale
 
 1. **5.13 first** — highest user-visible value (dispatches stop being black
