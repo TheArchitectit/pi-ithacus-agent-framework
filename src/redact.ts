@@ -29,8 +29,15 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/(\bBearer\s+)[A-Za-z0-9._~+/=-]{6,}/gi, "$1***REDACTED***"],
   // password=/token=/api_key=/secret= style assignments (the value is dropped).
   [/\b(password|passwd|pwd|secret|token|apikey|api[-_]?key|access[-_]?key|auth[-_]?token|client[-_]?secret|refresh[-_]?token)(["']?\s*[:=]\s*["']?)[^\s"',;]+/gi, "$1$2***REDACTED***"],
-  // Long hex/base64 runs (>=32 chars) — generic credential shapes.
-  [/\b[A-Za-z0-9+/=_-]{32,}\b/g, "***REDACTED***"],
+  // Long hex/base64url runs (>=32 chars) — generic credential shapes.
+  // NOTE: `/` is deliberately excluded from the class so file paths and URLs
+  // (which contain `/` separators) are not false-positive masked. This was the
+  // root cause of the "cd / ***REDACTED***" bug — a 32+ char path matched as
+  // one contiguous token. Base64 tokens that DO contain `/` are still caught by
+  // the Bearer / password= / PEM patterns above; the catch-all here is a net
+  // for bare hex and base64url tokens (no slashes) which are the common shapes
+  // for API keys and hash-based credentials.
+  [/\b[A-Za-z0-9+_=-]{32,}\b/g, "***REDACTED***"],
 ];
 
 /** Mask known secret shapes in a string. Unknown text passes through verbatim. */

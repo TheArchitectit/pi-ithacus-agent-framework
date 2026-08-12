@@ -97,6 +97,14 @@ check("redact secrets: Bearer token masked; plain prose passes through",
   !red2.includes(gh) && redact.redactSecrets("hello from the smoke suite") === "hello from the smoke suite");
 const pem = "-----BEGIN PRIVATE KEY-----\nMiIBVwIBADANBg\n-----END PRIVATE KEY-----";
 check("redact secrets: PRIVATE KEY block masked", !redact.redactSecrets(pem).includes("MiIBVwIBADANBg"));
+// FAIL-6c4a2d12: catch-all long-token pattern must NOT mask file paths.
+// The `/` was removed from the character class so paths split on separators
+// and no single segment reaches the 32-char threshold.
+const pathArg = "cd /mnt/data/git/pi-ithacus-agent-framework && ls -la";
+check("redact secrets: file paths NOT masked (catch-all excludes /)",
+  redact.redactSecrets(pathArg) === pathArg);
+check("redact secrets: bare 32+ hex token still masked",
+  !redact.redactSecrets("a".repeat(40)).includes("a".repeat(40)));
 // AWS-shaped token built via concatenation (never a contiguous literal here).
 const awsTok = "AK" + "IA" + "I0S89D0FOOKIE1XAMPLE"; // AKIA + 20 → matches the bounded pattern
 const awsArg = "cat /tmp/x && export AWS_KEY=" + awsTok + " && echo " + "y".repeat(40);
