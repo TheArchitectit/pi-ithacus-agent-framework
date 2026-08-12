@@ -71,6 +71,7 @@ export function registerMailboxTool(pi: ExtensionAPI, runtime: IthRuntime): void
       "Inter-agent mailbox (ith_inbox): send/read/broadcast between ithacus agents. " +
       "You are identified by your ITHACUS_AGENT_ID env (set by ithacus-dispatch); " +
       "messages are read per-recipient from the shared per-repo sqlite mailbox. " +
+      "To reach the interactive parent session, send to 'interactive' or 'parent' (they are aliased). " +
       "'read' consumes unread; 'peek' views without consuming.",
     parameters: MailboxParams,
     async execute(

@@ -41,12 +41,24 @@ function safePublish(ctx: MailboxEmitCtx | undefined, ev: IthacusEvent): void {
 
 export const INTERACTIVE_ID = "interactive";
 
-/** Sender identity: explicit override > ITHACUS_AGENT_ID env > "interactive". */
+/** #66: children commonly address the interactive parent as "parent" (in
+ *  prompts and natural language), but the interactive session reads its inbox
+ *  as "interactive". Both names must hit the same mailbox. */
+export const PARENT_ALIAS = "parent";
+
+/** Resolve an inbox address to its canonical form. "parent" maps to
+ *  "interactive" so messages either name land in the same mailbox. */
+export function canonicalAddress(addr: string): string {
+  return addr === PARENT_ALIAS ? INTERACTIVE_ID : addr;
+}
+
+/** Sender identity: explicit override > ITHACUS_AGENT_ID env > "interactive".
+ *  Normalizes "parent" → "interactive" via canonicalAddress. */
 export function resolveSelfAgentId(
   env: Record<string, string | undefined>,
   override?: string,
 ): string {
-  return override || env.ITHACUS_AGENT_ID || INTERACTIVE_ID;
+  return canonicalAddress(override || env.ITHACUS_AGENT_ID || INTERACTIVE_ID);
 }
 
 export interface MailboxSendOpts {
@@ -140,9 +152,11 @@ export function mailboxInbox(
   opts: { agentId: string; markRead: boolean; includeRead?: boolean; now?: number },
   ctx?: MailboxEmitCtx,
 ): MailboxInboxResult {
+  // #66: when the interactive session reads, also match "parent"-addressed messages.
+  const ids = opts.agentId === INTERACTIVE_ID ? [INTERACTIVE_ID, PARENT_ALIAS] : [opts.agentId];
   const messages = opts.includeRead
-    ? store.inbox(opts.agentId, true)
-    : store.unread(opts.agentId);
+    ? ids.flatMap((id) => store.inbox(id, true))
+    : ids.flatMap((id) => store.unread(id));
   let newlyRead = 0;
   if (opts.markRead) {
     for (const m of messages) {
@@ -168,6 +182,10 @@ export function mailboxInbox(
 }
 
 export function mailboxUnreadCount(store: IthStore, agentId: string): number {
+  // #66: interactive session counts both "interactive" and "parent" messages.
+  if (agentId === INTERACTIVE_ID) {
+    return store.unreadCount(INTERACTIVE_ID) + store.unreadCount(PARENT_ALIAS);
+  }
   return store.unreadCount(agentId);
 }
 

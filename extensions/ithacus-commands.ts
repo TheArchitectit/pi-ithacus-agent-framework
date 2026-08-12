@@ -53,17 +53,18 @@ export function registerTeamCommands(
   // object with a void-returning handler — not a bare async fn. The helper
   // provides contextual typing so args/ctx are never implicit any, wraps
   // each handler in { handler }, and adapts the string-returning handlers to
-  // pi's Promise<void> contract via a void wrapper.
-  // TODO(runtime): string returns are currently DISCARDED by the wrapper —
-  // wire to pi.sendMessage({customType:"ithacus-cmd-output",content,display})
-  // + registerMessageRenderer so /ithacus-* output actually displays.
+  // pi's Promise<void> contract by forwarding the returned string to
+  // ctx.ui.notify() so the user actually sees the output.
   const registerCmd = (
     name: string,
     handler: (args: string, ctx: ExtensionCommandContext) => Promise<string | void>,
   ): void => {
     pi.registerCommand(name, {
       handler: async (args, ctx) => {
-        await handler(args, ctx);
+        const output = await handler(args, ctx);
+        if (typeof output === "string" && output.length > 0) {
+          ctx.ui.notify(output, "info");
+        }
       },
     });
   };
