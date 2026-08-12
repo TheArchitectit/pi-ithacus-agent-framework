@@ -61,7 +61,98 @@ export interface IthacusConfig {
    *  read_only even when legacy `tools:` frontmatter exists (env
    *  ITHACUS_PERMISSION_STRICT; default false = legacy pass-through). */
   permissionStrict: boolean;
+  /** Sprint 5.24 (DESIGN_TWO_TIER_POLICY.md): two-tier connectivity policy.
+   *  Tier L (Local) always on; Tier R (Remote) opt-in and default OFF. */
+  remote: RemoteCapabilities;
 }
+
+/** Known Tier-R capability ids (Sprint 5.24). Unknown keys are rejected. */
+export const REMOTE_CAP_IDS = ["a2a", "external_memory", "mesh"] as const;
+export type RemoteCapId = (typeof REMOTE_CAP_IDS)[number];
+
+/** Two-tier connectivity policy (DESIGN_TWO_TIER_POLICY.md §3.2). Tier L
+ *  (Local) ships on by default and is non-negotiable; Tier R (Remote) is
+ *  opt-in and defaults OFF, gated per-capability. */
+export interface RemoteCapabilities {
+  /** Master switch. False -> every Tier-R module is inert regardless of
+   *  individual toggles. Default false. */
+  remoteEnabled: boolean;
+  /** Per-capability toggles. Only meaningful when remoteEnabled. */
+  capabilities: Record<string, boolean>;
+}
+
+export const REMOTE_CAP_DEFAULTS: RemoteCapabilities = {
+  remoteEnabled: false,
+  capabilities: { a2a: false, external_memory: false, mesh: false },
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Parse a `remote` block (the `.ithacus/config.json` "remote" key) into
+ *  RemoteCapabilities. Rejects unknown capability keys. Pure — no env, no I/O.
+ *  Throws on malformed input (missing bools, unknown keys, non-object). */
+export function parseRemoteCapabilities(raw: unknown): RemoteCapabilities {
+  if (raw == null) {
+    return { remoteEnabled: false, capabilities: { ...REMOTE_CAP_DEFAULTS.capabilities } };
+  }
+  if (!isRecord(raw)) {
+    throw new Error('"remote" must be an object { remoteEnabled, capabilities }');
+  }
+  let remoteEnabled = false;
+  if (raw.remoteEnabled != null) {
+    if (typeof raw.remoteEnabled !== "boolean") {
+      throw new Error('"remote.remoteEnabled" must be a boolean');
+    }
+    remoteEnabled = raw.remoteEnabled;
+  }
+  const capabilities: Record<string, boolean> = { ...REMOTE_CAP_DEFAULTS.capabilities };
+  if (raw.capabilities != null) {
+    if (!isRecord(raw.capabilities)) {
+      throw new Error('"remote.capabilities" must be an object');
+    }
+    for (const key of Object.keys(raw.capabilities)) {
+      if (!(REMOTE_CAP_IDS as readonly string[]).includes(key)) {
+        throw new Error(`unknown remote capability: "${key}" (known: ${REMOTE_CAP_IDS.join(", ")})`);
+      }
+      const val = raw.capabilities[key];
+      if (typeof val !== "boolean") {
+        throw new Error(`remote capability "${key}" must be a boolean`);
+      }
+      capabilities[key] = val;
+    }
+  }
+  return { remoteEnabled, capabilities };
+}
+
+/** Resolve the effective RemoteCapabilities from project config + env.
+ *  Precedence: env (ITHACUS_REMOTE / ITHACUS_REMOTE_CAPS) > project config
+ *  (> .ithacus/config.json "remote" key) > defaults (all off). The master
+ *  switch dominates: if remoteEnabled is false every capability is inert.
+ *  Env is re-read on every call (never cached) so a toggle flip is respected
+ *  on the next load. */
+function resolveRemoteCapabilities(projectRemote: unknown): RemoteCapabilities {
+  const resolved = parseRemoteCapabilities(projectRemote);
+  const envRemote = process.env.ITHACUS_REMOTE;
+  if (envRemote != null && envRemote !== "") {
+    resolved.remoteEnabled = envBool("ITHACUS_REMOTE", false);
+  }
+  const envCaps = process.env.ITHACUS_REMOTE_CAPS;
+  if (envCaps != null && envCaps !== "") {
+    const caps = envCaps.split(",").map((s) => s.trim()).filter(Boolean);
+    const capabilities: Record<string, boolean> = { ...REMOTE_CAP_DEFAULTS.capabilities };
+    for (const c of caps) {
+      if (!(REMOTE_CAP_IDS as readonly string[]).includes(c)) {
+        throw new Error(`[ithacus] unknown remote capability in ITHACUS_REMOTE_CAPS: "${c}"`);
+      }
+      capabilities[c] = true;
+    }
+    resolved.capabilities = capabilities;
+  }
+  return resolved;
+}
+
 
 function envBool(name: string, fallback: boolean): boolean {
   const v = process.env[name];
@@ -75,7 +166,7 @@ function envNum(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-export function loadConfig(): IthacusConfig {
+export function loadConfig(projectRemote?: unknown): IthacusConfig {
   const rawFb = process.env.ITHACUS_FALLBACK_MODELS;
   const fallbackModels = rawFb
     ? rawFb.split(",").map((s) => s.trim()).filter(Boolean)
@@ -91,6 +182,7 @@ export function loadConfig(): IthacusConfig {
     fallbackModels,
     permissionModeDefault: normalizePermissionMode(process.env.ITHACUS_PERMISSION_MODE_DEFAULT),
     permissionStrict: envBool("ITHACUS_PERMISSION_STRICT", false),
+    remote: resolveRemoteCapabilities(projectRemote),
   };
 }
 

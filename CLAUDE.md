@@ -63,6 +63,23 @@ them as authoritative and do not re-introduce such references.
 | PREVENT-ITH-003 | error | Never inject context as `role:"system"` — prepend via `systemPrompt`. |
 | PREVENT-ITH-004 | critical | **No external service / no subscription required.** Runs on local pi + Node built-ins; the extension source itself makes zero network calls at runtime (scan-enforced). Spawned sub-agents call your configured pi providers. Annotated exceptions for local-only integrations (e.g. dispatching the local `pi` binary, `// guardrails-allow PREVENT-ITH-004: <reason>`). |
 | PREVENT-DIST-001 | error | Distribute ONLY via `npm publish` + `pi install npm:ithacus`. Never `.tgz` tarball or symlink for shipping. |
+| PREVENT-ITH-005 | error | Tier L code must not import `extensions/opt-in/*` except through the capability gate (Sprint 5.24). |
+
+### Two-tier trust & connectivity (Sprint 5.24 — DESIGN_TWO_TIER_POLICY.md)
+
+* **Tier L (local, always on):** everything in `src/`, `extensions/*.ts`,
+  `extensions/ithacus-events/`. PREVENT-ITH-004 applies strictly here —
+  zero network, no exceptions.
+* **Tier R (remote, opt-in, default OFF):** modules under `extensions/opt-in/`
+  ONLY. Every file there must carry a file-level
+  `// guardrails-allow PREVENT-ITH-004: <capability>` header annotation;
+  runtime entry points must call `requireCapability()` from
+  `extensions/opt-in/gate.ts`. Capability resolution:
+  env (`ITHACUS_REMOTE`, `ITHACUS_REMOTE_CAPS`) > project config `remote`
+  key > defaults all-off. Master switch dominates: `remoteEnabled: false`
+  makes every Tier R module inert regardless of per-capability toggles.
+* No network code ever ships in a policy sprint; Tier R modules ship behind
+  setup-panel toggles (Sprint 5.23) and explicit user approval.
 
 ## 3. Workflow
 

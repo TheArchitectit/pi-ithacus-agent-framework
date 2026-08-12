@@ -1,7 +1,7 @@
 {
   "$schema": "./pattern-rules.schema.json",
   "description": "Pattern-based prevention rules for regression detection. PREVENT-PI-* (from agent-guardrails-template) + PREVENT-ITH-* / PREVENT-DIST-001 (ithacus project rules, kept per project convention).",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "rules": [
     {
       "rule_id": "PREVENT-001",
@@ -521,6 +521,17 @@
       "severity": "critical",
       "file_glob": ["extensions/**/*.ts", "src/**/*.ts"],
       "suggestion": "Keep the extension source free of fetch/WebSocket/network calls. Spawning the local `pi` binary via node:child_process is allowed WITH a guardrails-allow annotation (intra-machine, no network)."
+    },
+    {
+      "rule_id": "PREVENT-ITH-005",
+      "name": "Opt-in boundary: non-opt-in code must not import extensions/opt-in/* except through the capability gate",
+      "enabled": true,
+      "pattern": "(from\\s+[\"'][^\"']*opt-in/|import\\([\"'][^\"']*opt-in/)",
+      "forbidden_context": "(requireCapability|capabilityEnabled|gate)",
+      "message": "Tier-R (opt-in) modules are reachable only through the runtime capability gate (extensions/opt-in/gate.ts). Non-opt-in code must not import extensions/opt-in/* directly or an inert/disabled Tier-R module could run without its toggle (DESIGN_TWO_TIER_POLICY.md §3.1/§3.3).",
+      "severity": "error",
+      "file_glob": ["extensions/**/*.ts", "src/**/*.ts", "*.ts"],
+      "suggestion": "Import through extensions/opt-in/gate.ts (capabilityEnabled / requireCapability) and gate every opt-in entry point with requireCapability() first."
     },
     {
       "rule_id": "PREVENT-DIST-001",

@@ -241,6 +241,121 @@ def load_prevention_rules(rules_path: Path) -> List[Dict]:
 # chore(release) commit and the tag lands on a non-release commit.
 # ---------------------------------------------------------------------------
 
+def validate_optin_annotation_discipline() -> List[str]:
+    """Sprint 5.24 — two-tier trust model enforcement (DESIGN_TWO_TIER_POLICY §3.1).
+
+    1. Every extensions/opt-in/*.ts must carry a file-level
+       `// guardrails-allow PREVENT-ITH-004: <capability>` header annotation.
+    2. That annotation is honored ONLY under extensions/opt-in/ — its presence
+       in Tier L files is a discipline violation.
+    3. extensions/opt-in/ must never be imported by Tier L code except through
+       the capability gate (PREVENT-ITH-005).
+    """
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    optin_dir = os.path.join(repo_root, "extensions", "opt-in")
+    problems: List[str] = []
+
+    # (1) every opt-in module self-declares its capability
+    if os.path.isdir(optin_dir):
+        for entry in sorted(os.listdir(optin_dir)):
+            if not entry.endswith(".ts"):
+                continue
+            try:
+                text = Path(os.path.join(optin_dir, entry)).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if not re.search(r"^//\s*guardrails-allow\s+PREVENT-ITH-004:", text, re.M):
+                problems.append(
+                    f"extensions/opt-in/{entry}: missing required "
+                    "'// guardrails-allow PREVENT-ITH-004: <capability>' header annotation"
+                )
+
+    # (2) annotations outside extensions/opt-in/ are only a violation when the
+    #     annotated line carries a network-capable construct — mirroring
+    #     guardrails-scan.mjs semantics (fetch/WebSocket/net./XHR, or a
+    #     non-loopback http(s):// URL). Local annotations (child_process,
+    #     sqlite, loopback) stay legal in Tier L; src/search.ts is
+    #     grandfathered like the scanner.
+    grandfathered = {os.path.join(repo_root, "src", "search.ts")}
+    loopback = ("localhost", "127.0.0.1", "::1")
+
+    def has_network_construct(line: str) -> bool:
+        if re.search(r"fetch\(|new WebSocket|net\.|XMLHttpRequest", line):
+            return True
+        m = re.search(r"https?://([^/\s\"']+)", line)
+        if not m:
+            return False
+        host = m.group(1)
+        if host.startswith("["):
+            end = host.find("]")
+            host = host if end == -1 else host[1:end]
+        else:
+            host = host.split(":")[0]
+        host = host.lower()
+        return not (host in loopback or host.endswith(".localhost"))
+
+    ext_dir = os.path.join(repo_root, "extensions")
+    if os.path.isdir(ext_dir):
+        optin_abs = os.path.abspath(optin_dir)
+        for dirpath, _dirnames, filenames in os.walk(ext_dir):
+            if os.path.abspath(dirpath).startswith(optin_abs):
+                continue
+            for fn in filenames:
+                if not fn.endswith(".ts"):
+                    continue
+                path = os.path.join(dirpath, fn)
+                if path in grandfathered:
+                    continue
+                try:
+                    text = Path(path).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for i, line in enumerate(text.splitlines(), 1):
+                    if re.match(r"^\s*//\s*guardrails-allow\s+PREVENT-ITH-004:", line) and \
+                            has_network_construct(line):
+                        rel = os.path.relpath(path, repo_root)
+                        problems.append(
+                            f"{rel}:{i}: PREVENT-ITH-004 annotation with network "
+                            "construct only honored under extensions/opt-in/"
+                        )
+
+    # (3) Tier L must not import extensions/opt-in/ directly
+    for sub in ("src", os.path.join("extensions", "ithacus-events")):
+        base = os.path.join(repo_root, sub)
+        if not os.path.isdir(base):
+            continue
+        for dirpath, _dirnames, filenames in os.walk(base):
+            for fn in filenames:
+                if not fn.endswith(".ts"):
+                    continue
+                try:
+                    text = Path(os.path.join(dirpath, fn)).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                if re.search(r"""from\s+["'][^"']*extensions/opt-in""", text) or \
+                        re.search(r"""from\s+["']\.{1,2}/opt-in""", text):
+                    rel = os.path.relpath(os.path.join(dirpath, fn), repo_root)
+                    problems.append(
+                        f"{rel}: imports extensions/opt-in/* directly; route through "
+                        "the capability gate (PREVENT-ITH-005)"
+                    )
+    if os.path.isdir(ext_dir):
+        for fn in sorted(os.listdir(ext_dir)):
+            if not fn.endswith(".ts"):
+                continue
+            try:
+                text = Path(os.path.join(ext_dir, fn)).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if re.search(r"""from\s+["']\./opt-in""", text):
+                problems.append(
+                    f"extensions/{fn}: imports ./opt-in directly; route through "
+                    "the capability gate (PREVENT-ITH-005)"
+                )
+
+    return problems
+
+
 def check_staged_version_field() -> List[str]:
     """Block staged package.json 'version' field changes outside a release
     context. Exempt when ITHACUS_RELEASE_BUMP=1 (set by deploy.sh step 4)."""
@@ -529,6 +644,15 @@ Examples:
         for p in version_problems:
             print(f"  - {p}", file=stream or sys.stdout)
 
+    # Sprint 5.24: two-tier trust model — opt-in annotation discipline.
+    # Failures always fail the gate (like bundle validation).
+    optin_problems = validate_optin_annotation_discipline()
+    if optin_problems:
+        stream = sys.stderr if args.json else None
+        print("\n\u2717 Opt-in annotation discipline violations:", file=stream or sys.stdout)
+        for p in optin_problems:
+            print(f"  - {p}", file=stream or sys.stdout)
+
     # Run check
     count, issues = run_regression_check(
         registry_path=args.registry,
@@ -550,7 +674,7 @@ Examples:
     # Exit code — bundle validation failures ALWAYS fail the gate (even
     # without --pre-commit); regression findings stay advisory unless
     # --pre-commit is passed (historical behavior).
-    if bundle_problems or version_problems:
+    if bundle_problems or version_problems or optin_problems:
         sys.exit(1)
     if args.pre_commit and count > 0:
         sys.exit(1)
