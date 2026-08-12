@@ -49,6 +49,7 @@ export const review = await import(join(buildDir, "review.ts"));
 export const commits = await import(join(buildDir, "commits.ts"));
 export const { HindsightStore } = await import(join(buildDir, "store-hindsight.ts"));
 export const hindsight = await import(join(buildDir, "hindsight.ts"));
+export const consolidate = await import(join(buildDir, "consolidate.ts"));
 export const search = await import(join(buildDir, "search.ts"));
 export const schemes = await import(join(buildDir, "schemes.ts"));
 export const { EventsStore } = await import(join(buildDir, "store-events.ts"));

@@ -27,6 +27,12 @@ export class HindsightStore {
     if (!cols.has('runId')) this.db.exec(`ALTER TABLE ith_memories ADD COLUMN runId TEXT`);
     if (!cols.has('relevance')) this.db.exec(`ALTER TABLE ith_memories ADD COLUMN relevance REAL NOT NULL DEFAULT 0`);
     if (!cols.has('reflected')) this.db.exec(`ALTER TABLE ith_memories ADD COLUMN reflected INTEGER NOT NULL DEFAULT 0`);
+    // Sprint 5.18 (DESIGN_MEMORY_CONSOLIDATION.md): consolidation metadata.
+    // Added here too (idempotent) so a standalone HindsightStore recall() can
+    // reference them even when constructed without an IthStore migrate.
+    if (!cols.has('superseded_by')) this.db.exec(`ALTER TABLE ith_memories ADD COLUMN superseded_by TEXT`);
+    if (!cols.has('collapsed_into')) this.db.exec(`ALTER TABLE ith_memories ADD COLUMN collapsed_into TEXT`);
+    if (!cols.has('cluster_tag')) this.db.exec(`ALTER TABLE ith_memories ADD COLUMN cluster_tag TEXT`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS ix_ith_mem_hindsight ON ith_memories(repoId, reflected, ts)`);
   }
 
@@ -39,13 +45,16 @@ export class HindsightStore {
           entry.agentId ?? null, entry.runId ?? null, entry.relevance, entry.reflected ? 1 : 0);
   }
 
-  /** Recall hindsight entries for a repo, optionally filtered + sorted by relevance. */
+  /** Recall hindsight entries for a repo, optionally filtered + sorted by
+   *  relevance. Excludes consolidated-away rows (superseded / collapsed) so a
+   *  stale or near-duplicate fact never outranks its current replacement. */
   recall(repoId: string, opts?: { kind?: string; limit?: number; minRelevance?: number }): HindsightEntry[] {
     const limit = opts?.limit ?? 8;
     const minRel = opts?.minRelevance ?? 0;
+    const excl = " AND superseded_by IS NULL AND collapsed_into IS NULL";
     const rows = opts?.kind
-      ? this.db.prepare(`SELECT * FROM ith_memories WHERE repoId = ? AND kind = ? AND relevance >= ? ORDER BY relevance DESC, ts DESC LIMIT ?`).all(repoId, opts.kind, minRel, limit)
-      : this.db.prepare(`SELECT * FROM ith_memories WHERE repoId = ? AND relevance >= ? ORDER BY relevance DESC, ts DESC LIMIT ?`).all(repoId, minRel, limit);
+      ? this.db.prepare(`SELECT * FROM ith_memories WHERE repoId = ? AND kind = ? AND relevance >= ?${excl} ORDER BY relevance DESC, ts DESC LIMIT ?`).all(repoId, opts.kind, minRel, limit)
+      : this.db.prepare(`SELECT * FROM ith_memories WHERE repoId = ? AND relevance >= ?${excl} ORDER BY relevance DESC, ts DESC LIMIT ?`).all(repoId, minRel, limit);
     return (rows as Array<Record<string, unknown>>).map(r => this.rowToEntry(r));
   }
 

@@ -21,6 +21,7 @@ import type {
   AsyncRunStatus,
 } from "./types.js";
 import type { IthacusEvent } from "./events.js";
+import type { ConsolidationPlan } from "./consolidate.js";
 
 /** The subset of IthacusEvent the A2A rollup consumes (read-able event shape). */
 interface IthacusEventLike {
@@ -145,6 +146,21 @@ export class IthStore {
     if (!taskCols.has("phase")) {
       this.db.exec(`ALTER TABLE ith_tasks ADD COLUMN phase TEXT`);
     }
+
+    // Sprint 5.18 (DESIGN_MEMORY_CONSOLIDATION.md): consolidation metadata
+    // columns on ith_memories. Idempotent, PRAGMA-guarded. NULL = active
+    // (not superseded, not collapsed). Originals are never text-rewritten.
+    const memCols = cols("ith_memories");
+    if (!memCols.has("superseded_by")) {
+      this.db.exec(`ALTER TABLE ith_memories ADD COLUMN superseded_by TEXT`);
+    }
+    if (!memCols.has("collapsed_into")) {
+      this.db.exec(`ALTER TABLE ith_memories ADD COLUMN collapsed_into TEXT`);
+    }
+    if (!memCols.has("cluster_tag")) {
+      this.db.exec(`ALTER TABLE ith_memories ADD COLUMN cluster_tag TEXT`);
+    }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS ix_ith_mem_consolidation ON ith_memories(superseded_by, collapsed_into)`);
   }
 
   createRun(run: IthRun): void {
@@ -269,13 +285,47 @@ export class IthStore {
        VALUES (?, ?, ?, ?, ?)`,
     ).run(m.id, m.kind, m.text, m.repoId, m.ts);
   }
-  /** Recall memories for a repo, optionally filtered by kind. */
-  recall(repoId: string, kind?: MemoryKind, limit = 8): IthMemory[] {
+  /** Recall memories for a repo, optionally filtered by kind.
+   *  Excludes consolidated-away rows (superseded / collapsed) unless
+   *  includeConsolidated is true (Sprint 5.18). */
+  recall(repoId: string, kind?: MemoryKind, limit = 8, includeConsolidated = false): IthMemory[] {
+    const excl = includeConsolidated ? "" : " AND superseded_by IS NULL AND collapsed_into IS NULL";
     const sql = kind
-      ? `SELECT * FROM ith_memories WHERE repoId = ? AND kind = ? ORDER BY ts DESC LIMIT ?`
-      : `SELECT * FROM ith_memories WHERE repoId = ? ORDER BY ts DESC LIMIT ?`;
+      ? `SELECT * FROM ith_memories WHERE repoId = ? AND kind = ?${excl} ORDER BY ts DESC LIMIT ?`
+      : `SELECT * FROM ith_memories WHERE repoId = ?${excl} ORDER BY ts DESC LIMIT ?`;
     const args = kind ? [repoId, kind, limit] : [repoId, limit];
     return this.db.prepare(sql).all(...args) as unknown as IthMemory[];
+  }
+
+  /** Number of active (non-consolidated) memory rows for a repo — used for the
+   *  consolidation.autoThreshold trigger (Sprint 5.18). */
+  memoryCount(repoId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM ith_memories WHERE repoId = ? AND superseded_by IS NULL AND collapsed_into IS NULL`)
+      .get(repoId) as unknown as { n: number };
+    return row.n;
+  }
+
+  /** Commit a dry-run ConsolidationPlan: mark superseded / collapse members /
+   *  tag clusters. Only ADDS metadata columns — never rewrites entry text.
+   *  Idempotent-ish: re-applying an action overwrites its metadata (safe). */
+  applyConsolidation(plan: ConsolidationPlan): void {
+    for (const s of plan.supersede) {
+      this.db.prepare(`UPDATE ith_memories SET superseded_by = ? WHERE id = ?`)
+        .run(s.supersededBy, s.id);
+    }
+    for (const c of plan.collapse) {
+      for (const member of c.memberIds) {
+        this.db.prepare(`UPDATE ith_memories SET collapsed_into = ? WHERE id = ?`)
+          .run(c.mergedId, member);
+      }
+    }
+    for (const cl of plan.cluster) {
+      for (const member of cl.memberIds) {
+        this.db.prepare(`UPDATE ith_memories SET cluster_tag = ? WHERE id = ?`)
+          .run(cl.tag, member);
+      }
+    }
   }
 
   saveWorktree(w: WorktreeConfig): void {

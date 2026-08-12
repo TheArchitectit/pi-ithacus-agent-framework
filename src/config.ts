@@ -85,6 +85,21 @@ export interface IthacusConfig {
    *  feature flags, all DEFAULT ON (opt-out surface). Env ITHACUS_UI >
    *  project config ".ithacus/config.json" "ui" key > defaults (all on). */
   ui: UiFlags;
+  /** Sprint 5.18 (DESIGN_MEMORY_CONSOLIDATION.md): memory-consolidation tuning. */
+  consolidation: ConsolidationConfig;
+}
+
+/** Memory-consolidation tuning (Sprint 5.18). All fields have safe defaults;
+ *  surfaced on ith_memories via consolidate(). */
+export interface ConsolidationConfig {
+  /** Token-overlap in [0,1]; near-duplicates at/above merge. default 0.75. */
+  collapseThreshold: number;
+  /** Token-overlap in [0,1]; similar entries at/above group into a recall cluster. default 0.5. */
+  clusterThreshold: number;
+  /** Collapse time window in ms. default 24h. */
+  windowMs: number;
+  /** Auto-consolidate when a repo's active memory count exceeds this. default 500 (0 = off). */
+  autoThreshold: number;
 }
 
 /** Known Tier-R capability ids (Sprint 5.24). Unknown keys are rejected. */
@@ -322,6 +337,12 @@ export function loadConfig(projectRemote?: unknown, projectUi?: unknown): Ithacu
     permissionStrict: envBool("ITHACUS_PERMISSION_STRICT", false),
     remote: resolveRemoteCapabilities(projectRemote),
     ui: resolveUiFlags(projectUi),
+    consolidation: {
+      collapseThreshold: envNum("ITHACUS_CONSOLIDATE_COLLAPSE", 0.75),
+      clusterThreshold: envNum("ITHACUS_CONSOLIDATE_CLUSTER", 0.5),
+      windowMs: envNum("ITHACUS_CONSOLIDATE_WINDOW_MS", 24 * 60 * 60 * 1000),
+      autoThreshold: envNum("ITHACUS_CONSOLIDATE_AUTO", 500),
+    },
   };
 }
 

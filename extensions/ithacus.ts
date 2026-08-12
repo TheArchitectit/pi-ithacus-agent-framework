@@ -13,6 +13,7 @@ import { loadConfig } from "../src/config.js";
 import { IthRuntime } from "./ithacus-runtime.js";
 import { registerEventHandlers } from "./ithacus-events/register.js";
 import { registerTeamCommands } from "./ithacus-commands.js";
+import { registerMemoryCommands } from "./ithacus-memory.js";
 import { registerDispatchTool } from "./ithacus-dispatch.js";
 import { registerMailboxTool } from "./ithacus-message.js";
 import { registerControlTool } from "./ithacus-control-tool.js";
@@ -53,6 +54,8 @@ export default function (pi: ExtensionAPI) {
   }
   registerEventHandlers(pi, runtime, config);
   registerTeamCommands(pi, runtime, config);
+  // Sprint 5.18 (DESIGN_MEMORY_CONSOLIDATION.md): /ithacus-memory consolidate.
+  registerMemoryCommands(pi, runtime, config);
   // Sprint 5.10: the `ithacus-dispatch` tool is the LLM-invoked entry point
   // for spawning coordinated sub-agents (real pi subprocess, isolated context,
   // per-agent model). Clears the phantom `pi.callTool` dispatch for good.

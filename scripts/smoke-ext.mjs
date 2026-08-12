@@ -1263,6 +1263,53 @@ try {
     try { rmSync(ckRepo, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
+  // ---- Sprint 5.18 — /ithacus-memory consolidate (DESIGN_MEMORY_CONSOLIDATION.md) -
+  // Exercises registerMemoryCommands: registers /ithacus-memory, runs a dry-run
+  // plan over seeded active rows, and --apply commits via applyConsolidation /
+  // recall filters. No pi TUI, no network (PREVENT-ITH-004).
+  {
+    const memMod = await import(join(tmpDir, "ithacus-memory.ts"));
+    const storeMod = await import(join(tmpDir, "store.ts"));
+    const consMod = await import(join(tmpDir, "consolidate.ts"));
+
+    const memRepo = mkdtempSync(join(repoRoot, ".smoke-mem-tmp-"));
+    execSync("git init -q && git config user.email t@t.co && git config user.name t && git commit -q --allow-empty -m init", { cwd: memRepo });
+    const memStore = new storeMod.IthStore(memRepo, {});
+    memStore.addMemory({ id: "m1", kind: "fact", text: "auth signs jwt [superseded]", repoId: "r", ts: 100 });
+    memStore.addMemory({ id: "m2", kind: "fact", text: "auth signs jwt tokens", repoId: "r", ts: 200 });
+    memStore.addMemory({ id: "m3", kind: "fact", text: "auth signs jwt token flow", repoId: "r", ts: 300 });
+
+    const memPi = { registerCommand: (name, def) => { memPi.registered = { name, def }; }, registerTool: () => {}, on: () => {}, setModel: () => {} };
+    const memRuntime = {
+      store: memStore,
+      bindRepo: () => {},
+      repoId: () => "r",
+    };
+    const memConfig = { consolidation: { collapseThreshold: 0.5, clusterThreshold: 0.5, windowMs: 86400000, autoThreshold: 500 } };
+    memMod.registerMemoryCommands(memPi, memRuntime, memConfig);
+    check("memory.command registers /ithacus-memory", memPi.registered?.name === "ithacus-memory");
+    check("memory.command has handler", typeof memPi.registered?.def?.handler === "function");
+
+    // Dry-run: supersede m1 + collapse (should merge the two auth facts) — nothing applied.
+    const ctxM = { cwd: memRepo };
+    const dry = await memMod.runMemoryCommand(memRuntime, memConfig, "consolidate", ctxM);
+    check("memory.dry-run reports supersede", dry.includes("supersede: 1"));
+    check("memory.dry-run reports collapse", dry.includes("collapse:"));
+    check("memory.dry-run marker", dry.includes("--apply"));
+    check("memory.dry-run not applied (still 3 recalled)", memStore.recall("r", undefined, 10).length === 3);
+
+    // Commit: --apply marks superseded/collapsed, recall drops them.
+    const applied = await memMod.runMemoryCommand(memRuntime, memConfig, "consolidate --apply", ctxM);
+    check("memory.apply reports committed", applied.includes("committed:"));
+    check("memory.apply commits supersede", memStore.db.prepare(`SELECT superseded_by FROM ith_memories WHERE id='m1'`).get().superseded_by !== null);
+    const rec = memStore.recall("r", undefined, 10);
+    check("memory.apply recall keeps only active survivor(s)", rec.length === 1);
+    const status = await memMod.runMemoryCommand(memRuntime, memConfig, "status", ctxM);
+    check("memory.status reports active count", status.includes("1 active memories"));
+    memStore.close();
+    try { rmSync(memRepo, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
   // ---- summary ----------------------------------------------------------
   const passed = checks.filter(([, ok]) => ok).length;
   const failed = checks.length - passed;
