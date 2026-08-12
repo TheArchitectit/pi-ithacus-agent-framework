@@ -30,6 +30,7 @@ import * as s27 from "./smoke-src/27-event-bus.mjs";
 import * as s28 from "./smoke-src/28-worker-status.mjs";
 import * as s29 from "./smoke-src/29-permissions.mjs";
 import * as s30 from "./smoke-src/30-remote-capabilities.mjs";
+import * as s31 from "./smoke-src/31-card-toggles.mjs";
 
 import { failures, buildDir, tmpRepo } from "./smoke-src/_harness.mjs";
 import { rmSync } from "node:fs";
@@ -67,6 +68,7 @@ try {
   await s28.run(ctx);
   await s29.run(ctx);
   await s30.run(ctx);
+  await s31.run(ctx);
 } finally {
   try { ctx.store?.close(); } catch {}
 }

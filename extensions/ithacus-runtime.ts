@@ -46,6 +46,12 @@ export class IthRuntime {
   debounceUntil = 0;
   resumeNudgeUntil = 0;
 
+  /** Sprint 5.27 §3.2/§3.3: the currently mounted live overlay's handle (set
+   *  by registerDispatchTool's onHandle). Lets /ithacus-live commands reach
+   *  the mounted card to toggle show/hide/size WITHOUT a new render cycle —
+   *  null until the first card mounts (and after a session without a card). */
+  liveCardHandle: { hide(): void; setHidden(hidden: boolean): void } | null = null;
+
   constructor(config: IthacusConfig) {
     this.config = config;
     this.store = new IthStore(undefined, config);

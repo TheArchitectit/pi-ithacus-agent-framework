@@ -40,6 +40,20 @@ import { getLive, listLive, onLiveChanged, removeLive } from "./ithacus-live.js"
 import type { AgentLive } from "./ithacus-live.js";
 import type { WorkerStatus } from "../src/events.js";
 import { isTerminalStatus } from "../src/worker-status.js";
+// Sprint 5.27 §3.2/§3.3: pure width-size + hide/resume toggle logic lives in
+// src/live-card-toggles.ts (pi-agnostic, unit-tested by smoke-src/31). This
+// card module holds ONLY the live mutable state; all parsing/width math
+// delegates to the pure functions. PREFERRED_TERM_WIDTH is the sentinel pi's
+// component.width getter uses when the true terminal width is unknown — pi
+// clamps to the real terminal at layout/render time (like legacy AUTO_MAX).
+import {
+  cardSizeToWidth,
+  parseCardSize,
+  cycleCardSize as cycleCardSizeNext,
+  parseCardHidden,
+  PREFERRED_TERM_WIDTH,
+} from "../src/live-card-toggles.js";
+import type { LiveCardSize } from "../src/live-card-toggles.js";
 
 // ---------------------------------------------------------------------------
 // helpers (zero-dep — visibleWidth/truncateToWidth/wrapText stay local;
@@ -132,6 +146,60 @@ const LIVE_CARD_WIDTH_KV_KEY = "live_card_width_mode";
 
 let widthMode: LiveCardWidthMode = "auto";
 
+/** Sprint 5.27 §3.2 — named card sizes (small|medium|large → 50/76/min(118,
+ *  termWidth-4)) SUPERSEDE the legacy auto/fixed width mode when set. When
+ *  cardSize is null the card behaves exactly as before (legacy auto/fixed).
+ *  Persisted in ith_kv under the key "card_size"; loaded at registration by
+ *  dispatch's loadLiveCardSize, toggled from /ithacus-live size. */
+let cardSize: LiveCardSize | null = null;
+
+/** The currently configured size, or null when unset (legacy auto/fixed). */
+export function getLiveCardCurrentSize(): LiveCardSize | null {
+  return cardSize;
+}
+
+/** Set the card size for NEW cards (the overlay's width getter recomputes on
+ *  each new card). Invalid values are ignored (size stays unchanged). */
+export function setLiveCardSize(size: LiveCardSize): void {
+  const parsed = parseCardSize(size);
+  if (parsed) cardSize = parsed;
+}
+
+/** "size next": small → medium → large → small. When unset (legacy) the
+ *  cycle starts from small. Returns the NEW size (callers persist it). */
+export function cycleLiveCardSize(): LiveCardSize {
+  cardSize = cycleCardSizeNext(cardSize);
+  return cardSize;
+}
+
+/** Load the persisted size pref from ith_kv (called once at extension
+ *  registration by registerDispatchTool). Best-effort: unreadable/unknown
+ *  values keep cardSize unset (legacy auto/fixed). */
+export function loadLiveCardSize(getKv: (key: string) => string | null): void {
+  try {
+    cardSize = parseCardSize(getKv("card_size"));
+  } catch {
+    /* kv unavailable (no runtime store) — keep the default */
+  }
+}
+
+/** Sprint 5.27 §3.3 — "start hidden on resume": true when card_hidden=true
+ *  is persisted. The dispatch onHandle applies setHidden(true) right after
+ *  it fires so a resumed session starts hidden. Loaded at registration. */
+let cardHidden = false;
+
+export function getLiveCardHidden(): boolean {
+  return cardHidden;
+}
+
+export function loadLiveCardHidden(getKv: (key: string) => string | null): void {
+  try {
+    cardHidden = parseCardHidden(getKv("card_hidden"));
+  } catch {
+    /* kv unavailable — default visible */
+  }
+}
+
 export function getLiveCardWidthMode(): LiveCardWidthMode {
   return widthMode;
 }
@@ -150,6 +218,10 @@ export function toggleLiveCardWidthMode(): LiveCardWidthMode {
  *  auto mode (render still clamps to the actual terminal width), FIXED_WIDTH
  *  in fixed mode. */
 export function getLiveCardPreferredWidth(): number {
+  // Sprint 5.27 §3.2: a named size wins over the legacy auto/fixed mode. The
+  // large size needs a terminal width — use the PREFERRED sentinel (pi clamps
+  // to the real terminal at layout time).
+  if (cardSize) return cardSizeToWidth(cardSize, PREFERRED_TERM_WIDTH);
   return widthMode === "auto" ? AUTO_MAX : FIXED_WIDTH;
 }
 
@@ -191,7 +263,7 @@ export class IthLiveCard {
   private done: (v: null) => void;
   private unsub: (() => void) | null = null;
   private autoHideTimer: ReturnType<typeof setTimeout> | null = null;
-  private handle: { hide(): void } | null = null;
+  private handle: { hide(): void; setHidden?(hidden: boolean): void } | null = null;
   private dismissed = false;
   /** Tick timer for the "duration (ticking)" acceptance criterion: between
    *  child events the store is quiet, so the card re-reads startedAt on an
@@ -229,7 +301,7 @@ export class IthLiveCard {
     }
   }
 
-  setHandle(handle: { hide(): void }): void {
+  setHandle(handle: { hide(): void; setHidden?(hidden: boolean): void }): void {
     this.handle = handle;
   }
 
@@ -319,9 +391,14 @@ export class IthLiveCard {
       // Sprint 5.13.1 width model: auto follows the terminal width clamped
       // to [AUTO_MIN, AUTO_MAX]; fixed pins to FIXED_WIDTH (both take the
       // min with what pi actually handed us so narrow terminals never overflow).
-      const w = widthMode === "auto"
-        ? Math.max(AUTO_MIN, Math.min(AUTO_MAX, width))
-        : Math.min(FIXED_WIDTH, width);
+      // Sprint 5.27 §3.2: a named size pins the render width (small/medium
+      // exact; large capped to terminal-4, clamped to what pi handed us so
+      // narrow terminals never overflow). Otherwise legacy auto/fixed.
+      const w = cardSize
+        ? Math.min(cardSizeToWidth(cardSize, width), width)
+        : widthMode === "auto"
+          ? Math.max(AUTO_MIN, Math.min(AUTO_MAX, width))
+          : Math.min(FIXED_WIDTH, width);
       const innerW = w - 2; // minus the two border chars
       const border = (s: string): string => fg("dim", s);
       const pad = (s: string, len: number): string =>

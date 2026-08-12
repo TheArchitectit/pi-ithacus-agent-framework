@@ -56,7 +56,14 @@ import {
   getLive,
   setWorkerStatus,
 } from "./ithacus-live.js";
-import { IthLiveCard, getLiveCardPreferredWidth, loadLiveCardWidthMode } from "./ithacus-live-card.js";
+import {
+  IthLiveCard,
+  getLiveCardPreferredWidth,
+  loadLiveCardWidthMode,
+  loadLiveCardSize,
+  loadLiveCardHidden,
+  getLiveCardHidden,
+} from "./ithacus-live-card.js";
 import { mapEventToStatus } from "../src/worker-status.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
@@ -131,7 +138,14 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
   if (runtime) wireLiveEventBus(runtime.eventBus);
   // Sprint 5.13.1: sync the persisted live-card width pref (ith_kv
   // "live_card_width_mode") into the card module's widthMode at registration.
-  if (runtime?.store) loadLiveCardWidthMode((k) => runtime.store.getKv(k));
+  // Sprint 5.13.1 + 5.27: sync the persisted live-card prefs (ith_kv
+  // "live_card_width_mode", "card_size", "card_hidden") into the card module
+  // at registration. Best-effort — a store-less runtime just keeps defaults.
+  if (runtime?.store) {
+    loadLiveCardWidthMode((k) => runtime.store.getKv(k));
+    loadLiveCardSize((k) => runtime.store.getKv(k));
+    loadLiveCardHidden((k) => runtime.store.getKv(k));
+  }
   const tool: ToolDefinition<typeof DispatchParams, DispatchDetails> = {
     name: "ithacus-dispatch",
     label: "ithacus dispatch",
@@ -227,9 +241,29 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             },
             {
               overlay: true,
-              overlayOptions: { width: getLiveCardPreferredWidth(), nonCapturing: true, anchor: "top-center", offsetY: 1 },
-              onHandle: (handle: { hide(): void }) => {
+              // Sprint 5.27 §3.2: center-anchored with a 1-col margin, capped
+              // at 70% height, hidden below 60 cols; width resolves to the
+              // preferred (auto/fixed/legacy, or the named card_size) which pi
+              // clamps to the real terminal at layout time.
+              overlayOptions: {
+                width: getLiveCardPreferredWidth(),
+                nonCapturing: true,
+                anchor: "center",
+                maxHeight: "70%",
+                margin: 1,
+                visible: (termWidth: number) => termWidth >= 60,
+              },
+              // Sprint 5.27 §3.3: the card stores its handle here for hide()/
+              // setHidden() reachable from /ithacus-live; we ALSO hand it to
+              // runtime.liveCardHandle so commands can toggle the currently
+              // mounted card without coupling to cardRef's closure. When a
+              // resumed session persisted card_hidden=true, start hidden.
+              onHandle: (handle: { hide(): void; setHidden(hidden: boolean): void }) => {
                 cardRef.current?.setHandle(handle);
+                if (runtime) runtime.liveCardHandle = handle;
+                if (getLiveCardHidden()) {
+                  try { handle.setHidden(true); } catch { /* best-effort */ }
+                }
               },
             },
           ).catch(() => { /* fire-and-forget — never block the tool result */ });
