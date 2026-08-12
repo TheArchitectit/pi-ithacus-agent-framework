@@ -24,6 +24,9 @@ import {
 export const TOOL_VISIBILITY: Record<string, ToolVisibility> = {
   "ithacus-mailbox": ToolVisibility.PUBLIC, // children must send/read/broadcast
   "ithacus-dispatch": ToolVisibility.INTERNAL, // only the interactive parent orchestrates spawns
+  // Sprint 5.28: the live-dispatch-control INTERNAL tool (and the /ithacus-ctrl
+  // slash command) — a second entry point over the same control core.
+  "ithacus-control": ToolVisibility.INTERNAL,
 };
 
 /** Module-level metadata: authoritative record of what ithacus advertised. */

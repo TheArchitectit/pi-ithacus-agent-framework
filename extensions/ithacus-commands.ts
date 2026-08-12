@@ -7,7 +7,6 @@
  * Mirrors PR #3250's `/team on|off|status` and the compressor's inspection
  * commands, expressed as pi registerCommand handlers.
  */
-
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { type IthRuntime } from "./ithacus-runtime.js";
 import { type IthacusConfig } from "../src/config.js";
@@ -33,7 +32,8 @@ import {
 // order come from the pi-agnostic src module (not the adapter), so the
 // command's size-arg validation matches the pure width math 1:1.
 import { LIVE_CARD_SIZES } from "../src/live-card-toggles.js";
-
+// Sprint 5.28: the live-dispatch control core + registry (shared module state).
+import { controlDispatch, dispatchRegistry, type ControlVerb } from "./ithacus-control.js";
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
   return {
@@ -43,14 +43,12 @@ function captureResolved(ctx: any): ResolvedModel {
     providerModel: (ctx as any)?.settings?.providerModel ?? null,
   };
 }
-
 export function registerTeamCommands(
   pi: ExtensionAPI,
   runtime: IthRuntime,
   config: IthacusConfig,
 ): void {
   let teamsEnabled = true;
-
   // Wrap pi.registerCommand: pi's contract is (name, { handler }) — an options
   // object with a void-returning handler — not a bare async fn. The helper
   // provides contextual typing so args/ctx are never implicit any, wraps
@@ -69,7 +67,6 @@ export function registerTeamCommands(
       },
     });
   };
-
   registerCmd("ithacus-team", async (args, ctx) => {
     const sub = (args as string)?.trim() ?? "";
     if (sub === "off") {
@@ -106,7 +103,6 @@ export function registerTeamCommands(
     });
     return `ithacus team created: ${res.runId} (${res.agents.length} agents, mode=${preset})`;
   });
-
   registerCmd("ithacus-status", async (_args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const snap = {
@@ -121,7 +117,6 @@ export function registerTeamCommands(
     };
     return JSON.stringify(snap, null, 2);
   });
-
   registerCmd("ithacus-recall", async (args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const repoId = runtime.repoId(ctx.cwd);
@@ -129,7 +124,6 @@ export function registerTeamCommands(
     if (!mems.length) return "ithacus: no memories recorded for this repo.";
     return mems.map((m) => `[${m.kind}] ${m.text}`).join("\n");
   });
-
   // ---- /ithacus-live width ... (Sprint 5.13.1) ---------------------------
   // Toggle/configure the live-progress card's width mode:
   //   width [toggle]      → flip auto↔fixed (+ persist)
@@ -162,7 +156,6 @@ export function registerTeamCommands(
         /* persist is best-effort — the module toggle already took effect */
       }
     };
-
     // Sprint 5.27 §3.2 helpers for the named card sizes.
     const describeSize = (): string => {
       const cur = getLiveCardCurrentSize();
@@ -188,7 +181,6 @@ export function registerTeamCommands(
         /* persist is best-effort */
       }
     };
-
     if (parts[0] === "width") {
       const sub = parts[1];
       if (sub === "auto" || sub === "fixed") {
@@ -237,23 +229,19 @@ export function registerTeamCommands(
     }
     return describe(); // no arg → status
   });
-
   registerCmd("ithacus-profiles", async (_args, ctx) => {
     runtime.bindRepo(ctx.cwd);
     const ps = ensureProfiles(runtime);
     const profiles = ps.listProfiles();
     return buildProfileSelectionPrompt(profiles);
   });
-
   // Validation gate: wraps createTeam so /ithacus-team validates first.
   (runtime as any).validateTeamPrompt = (prompt: string) => {
     return validatePrompt(prompt);
   };
-
   // Expose deleteTeam for programmatic use.
   (runtime as any).deleteTeam = (runId: string) => deleteTeam(runtime, runId);
   (runtime as any).teamStatus = (runId: string) => teamStatus(runtime, runId);
-
   // ---- /ithacus-swarm (feat 4.24) ----------------------------------------
   //   list                  → JSON of recent swarm runs
   //   show <runId>          → JSON of one SwarmResult
@@ -263,7 +251,6 @@ export function registerTeamCommands(
     const sStore = new SwarmStore(runtime.store.db);
     const raw = (args as string)?.trim() ?? "";
     const parts = raw.split(/\s+/).filter(Boolean);
-
     if (parts[0] === "list") {
       return JSON.stringify(sStore.listSwarmRuns(20));
     }
@@ -273,7 +260,6 @@ export function registerTeamCommands(
       const got = sStore.getSwarmResult(runId);
       return got ? JSON.stringify(got) : `swarm run ${runId} not found`;
     }
-
     // Default: run a pipeline swarm. token[0]=name, token[1..]=items.
     if (parts.length < 2) {
       return "usage: /ithacus-swarm <name> <item1> <item2> ... | list | show <runId>";
@@ -298,7 +284,6 @@ export function registerTeamCommands(
       return `swarm ${name} failed: ${e instanceof Error ? e.message : String(e)}`;
     }
   });
-
   // ---- /ithacus-synth <runId> [method] (feat 4.24) -----------------------
   // Load a SwarmResult, take successful item outputs as contributions, synthesize.
   registerCmd("ithacus-synth", async (args, ctx) => {
@@ -324,7 +309,6 @@ export function registerTeamCommands(
       method: synth.method,
     });
   });
-
   // ---- /ithacus-plan <goal> [roles...] (Sprint 5.6) ----------------------
   //   Synthesize a plan from a goal + agent roster, dispatch via swarm, persist.
   //   usage: /ithacus-plan <goal> [agent1 agent2 ...]
@@ -334,7 +318,6 @@ export function registerTeamCommands(
     const raw = (args as string)?.trim() ?? '';
     const parts = raw.split(/\s+/).filter(Boolean);
     if (parts.length === 0) return 'usage: /ithacus-plan <goal> [agent1 agent2 ...]';
-
     // Sprint 5.12.5 (DESIGN_AGENT_BUNDLES.md §7.1): trailing agent/role tokens
     // resolve against the DISCOVERED roster (bundled + project + .local) —
     // never a hard-coded four-role list — case-insensitively, passing the
@@ -353,7 +336,6 @@ export function registerTeamCommands(
     }
     const goal = goalParts.join(' ');
     if (!goal) return 'usage: /ithacus-plan <goal> [role1 role2 ...]';
-
     try {
       const resolved = captureResolved(ctx);
       const model = resolveAgentModel(null, resolved);
@@ -370,6 +352,48 @@ export function registerTeamCommands(
       return `plan "${goal.slice(0, 50)}": ${outcome.successful}/${outcome.total} ok (storeRunId=${outcome.storeRunId}, swarm=${outcome.swarmName})`;
     } catch (e) {
       return `plan failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  });
+  const ctrlVerbs: ControlVerb[] = ["pause", "resume", "start", "stop", "restart", "retry", "cancel", "swap_model", "swap_agent", "split_task", "add_agent"];
+  registerCmd("ithacus-ctrl", async (args) => {
+    const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+    const verb = parts[0] ?? "";
+    if (verb === "" || verb === "help") {
+      return [
+        "usage: /ithacus-ctrl <verb> <dispatchId|list> [key=value ...]",
+        "verbs: " + ctrlVerbs.join(" | "),
+        "swap_model <id> model=<id> [provider=<p>] | swap_agent <id> agent=<name>",
+        "split_task <id> task=<sub-task> agent=<name> [keepOriginal=true|false]",
+        "e.g. /ithacus-ctrl list | /ithacus-ctrl pause abc-123",
+      ].join("\n");
+    }
+    if (verb === "list") {
+      const live = dispatchRegistry.list();
+      if (live.length === 0) return "ithacus: 0 active dispatches (nothing to control)";
+      return live
+        .map((d) => `- ${d.dispatchId}  agent=${d.agent}  phase=${d.phase}  spawn#${d.spawnCount}${d.terminal ? ` →${d.terminal}` : ""}`)
+        .join("\n");
+    }
+    if (!ctrlVerbs.includes(verb as ControlVerb)) return `unknown verb: ${verb} — try /ithacus-ctrl help`;
+    const dispatchId = parts[1];
+    if (!dispatchId) return `usage: /ithacus-ctrl ${verb} <dispatchId>`;
+    const params: Record<string, string> = {};
+    for (const tok of parts.slice(2)) {
+      const eq = tok.indexOf("=");
+      if (eq > 0) params[tok.slice(0, eq)] = tok.slice(eq + 1);
+    }
+    try {
+      const action = await controlDispatch(verb as ControlVerb, dispatchId, {
+        model: params.model,
+        provider: params.provider,
+        agent: params.agent,
+        task: params.task,
+        keepOriginal: params.keepOriginal !== "false",
+      }, { runtime });
+      const tail = action.result === "ok" && action.spawnedDispatchId ? ` → spawned ${action.spawnedDispatchId}` : (action.error ?? action.reason ? ` (${action.error ?? action.reason})` : "");
+      return `ithacus ${verb} ${dispatchId}: ${action.result}${tail}`;
+    } catch (e) {
+      return `ithacus-ctrl ${verb} failed: ${e instanceof Error ? e.message : String(e)}`;
     }
   });
 }

@@ -60,6 +60,8 @@ export function toAgentStatus(status: WorkerStatus): AgentStatus {
     case "retrying":
       return "working";
     case "done":
+    case "stopped":     // user-initiated keep — not a failure
+    case "cancelled":   // user-initiated discard — not a failure
       return "done";
     case "failed":
       return "failed";
@@ -74,12 +76,25 @@ export function toAgentStatus(status: WorkerStatus): AgentStatus {
 
 /** Terminal states are absorbing: nothing transitions out of done/failed. */
 export function isTerminalStatus(status: WorkerStatus): boolean {
-  return status === "done" || status === "failed";
+  // Sprint 5.28 (§5.2): `stopped`/`cancelled` join done/failed as absorbing
+  // user-initiated terminal states.
+  return status === "done" || status === "failed" || status === "stopped" || status === "cancelled";
 }
 
 /** Blocking detection: the worker is paused waiting on a human grant. */
 export function isBlockedStatus(status: WorkerStatus): boolean {
   return status === "trust_required" || status === "tool_permission";
+}
+
+/**
+ * Sprint 5.28 (§5.2): is this a dispatch the user could still act on
+ * (controlDispatch targets it)? True for the live + paused resting states;
+ * false for the terminal/absorbing states (done/failed/stopped/cancelled).
+ */
+export function isControllableStatus(status: WorkerStatus): boolean {
+  return status === "spawning" || status === "trust_required" || status === "tool_permission"
+    || status === "ready_for_prompt" || status === "working" || status === "retrying"
+    || status === "paused" || status === "stopping" || status === "swapped" || status === "splitting";
 }
 
 // ---------------------------------------------------------------------------
@@ -97,18 +112,28 @@ const TRANSITIONS: Readonly<Record<WorkerStatus, readonly WorkerStatus[]>> = {
   // actively processing). "failed" stays ABSORBING (endLive fires once, in
   // the caller — the retry loop uses setWorkerStatus before that), so failed
   // never re-enters a retry.
-  spawning: ["spawning", "trust_required", "tool_permission", "ready_for_prompt", "working", "retrying", "done", "failed"],
-  // Trust precedes permission/ready/work; no rewind to "spawning".
-  trust_required: ["trust_required", "tool_permission", "ready_for_prompt", "working", "done", "failed"],
-  tool_permission: ["tool_permission", "ready_for_prompt", "working", "done", "failed"],
-  ready_for_prompt: ["ready_for_prompt", "tool_permission", "working", "done", "failed"],
+  spawning: ["spawning", "trust_required", "tool_permission", "ready_for_prompt", "working", "retrying", "done", "failed", "paused", "stopping", "swapped", "splitting", "stopped", "cancelled"],
+  // Trust precedes permission/ready/work; no rewind to "spawning". Sprint 5.28:
+  // a blocked dispatch can still be control-killed (pause/stop/swap/split).
+  trust_required: ["trust_required", "tool_permission", "ready_for_prompt", "working", "done", "failed", "paused", "stopping", "stopped", "cancelled"],
+  tool_permission: ["tool_permission", "ready_for_prompt", "working", "done", "failed", "paused", "stopping", "stopped", "cancelled"],
+  ready_for_prompt: ["ready_for_prompt", "tool_permission", "working", "done", "failed", "paused", "stopping", "swapped", "splitting", "stopped", "cancelled"],
   // A mid-run grant gate is real: working → tool_permission → working.
-  working: ["working", "tool_permission", "retrying", "done", "failed"],
+  working: ["working", "tool_permission", "retrying", "done", "failed", "paused", "stopping", "swapped", "splitting", "stopped", "cancelled"],
   // Sprint 5.17: "retrying" is an ACTIVE phase between a failed attempt and a
   // fresh respawn — leaving it (working on the new child, or the final
   // terminal flip) is forward progress; done/failed still only enter from exit
   // classification, never from a line.
-  retrying: ["retrying", "working", "done", "failed"],
+  retrying: ["retrying", "working", "done", "failed", "paused", "stopping", "swapped", "splitting", "stopped", "cancelled"],
+  // Sprint 5.28 (§5.2): live-dispatch-control transition rows. Paused is a
+  // resting state (resume→working, or any control kill). stopping/swapped /
+  // splitting are transient — they lead to a fresh child or a terminal state.
+  paused: ["paused", "spawning", "working", "stopping", "swapped", "splitting", "stopped", "cancelled"],
+  stopping: ["stopping", "stopped", "cancelled"],
+  swapped: ["swapped", "spawning", "working", "done", "failed", "paused", "stopping", "stopped", "cancelled"],
+  splitting: ["splitting", "spawning", "working", "done", "failed", "paused", "stopping", "stopped", "cancelled"],
+  stopped: ["stopped"],
+  cancelled: ["cancelled"],
   done: ["done"],
   failed: ["failed"],
 };

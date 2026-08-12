@@ -49,12 +49,11 @@ import type {
 import { spawnAgent, fmtDuration } from "./ithacus-spawn.js";
 import {
   startLive,
-  updateLive,
   endLive,
-  parseJsonlLine,
+  endLiveControl,
   wireLiveEventBus,
   getLive,
-  setWorkerStatus,
+  toLiveProgress,
 } from "./ithacus-live.js";
 import {
   IthLiveCard,
@@ -64,25 +63,22 @@ import {
   loadLiveCardHidden,
   getLiveCardHidden,
 } from "./ithacus-live-card.js";
-import { mapEventToStatus } from "../src/worker-status.js";
 import {
   resolveRetryPolicy,
   resolveModelFallbackChain,
 } from "../src/team.js";
-import type { LiveProgress } from "../src/auto-compact.js";
 import { dispatchWithResilience } from "./ithacus-retry.js";
-import type { ResilienceResult, RetryHopRecord } from "./ithacus-retry.js";
+import type { ResilienceResult } from "./ithacus-retry.js";
+import { childOnProgress, dispatchRegistry } from "./ithacus-control.js";
+import { writeDispatchCompletion } from "./ithacus-completion.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
 import { loadConfig } from "../src/config.js";
-import type { IthacusConfig } from "../src/config.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
 import { registerToolWithVisibility } from "./ithacus-tool-registry.js";
 import { ToolVisibility } from "../src/tool-visibility.js";
 import { resolvePermissions } from "../src/permissions.js";
 import { applyTrustCeiling, trustFromSource } from "../src/extension-trust.js";
 import { redactForAudit } from "../src/redact.js";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { discoverIthacusAgents, findAgent } from "./ithacus-agents.js";
 
 // Compat re-export (Sprint 5.13 spawn-layer extraction): ithacus-team.ts:22
@@ -90,23 +86,6 @@ import { discoverIthacusAgents, findAgent } from "./ithacus-agents.js";
 // stable now that the implementation lives in ithacus-spawn.ts.
 export { spawnAgent };
 export type { SpawnAgentOpts, SpawnAgentResult } from "./ithacus-spawn.js";
-
-// Sprint 5.17 (§6.1): adapter from the extensions AgentLive store to the src/
-// LiveProgress shape the durability compact-rebuild uses. Pi-agnostic (pure
-// field mapping); keeps src/ auto-compact free of extension imports.
-function liveToProgress(live: { agent: string; model?: string; recentTools: Array<{ tool: string; args: string }>; toolCallCount: number; tokensIn: number; tokensOut: number; filesAccessed: string[]; taskPreview?: string } | undefined): LiveProgress | undefined {
-  if (!live) return undefined;
-  return {
-    agent: live.agent,
-    model: live.model,
-    recentTools: live.recentTools ?? [],
-    toolCallCount: live.toolCallCount ?? 0,
-    tokensIn: live.tokensIn ?? 0,
-    tokensOut: live.tokensOut ?? 0,
-    filesAccessed: live.filesAccessed ?? [],
-    taskPreview: live.taskPreview,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // registerDispatchTool — the LLM-invoked `ithacus-dispatch` tool
@@ -120,78 +99,6 @@ interface DispatchDetails {
   providerSource?: string;
   durationMs: number;
   success: boolean;
-}
-
-/**
- * Write a completion summary to `<repo>/.pi/ithacus/dispatch-completions/<id>.json`
- * so every dispatch leaves a durable artifact (dispatch id, agent, status,
- * duration, tail of the transcript). Best-effort + non-fatal — a dispatch must
- * never fail because the audit trail could not be written. The filename is a
- * sanitized version of the pi tool-call id + timestamp. Zero network.
- *
- * The target dir is the RUNTIME's per-repo state dir (runtime.currentStateDir,
- * refreshed with a no-op-safe bindRepo), NOT a direct config import — keeps
- * this module's import graph free of src/config.ts (whose ./permissions.js
- * specifier the smoke-ext harness cannot remap). When there is no runtime
- * (headless/stub), the completion file is skipped (belt-and-braces only).
- */
-function writeDispatchCompletion(runtime: IthRuntime | undefined, info: {
-  cwd: string | undefined;
-  dispatchId: string;
-  agentType: string;
-  res: { success: boolean; exitCode: number; durationMs: number; model?: string; provider?: string; output?: string; stderr?: string; error?: string } | undefined;
-  startTime: number;
-  task: string;
-  paramsModel?: string;
-  paramsProvider?: string;
-  /** Sprint 5.17: per-attempt resilience record from dispatchWithResilience. */
-  retryMeta?: RetryHopRecord[];
-}): void {
-  try {
-    if (!runtime) return;
-    runtime.bindRepo(info.cwd);
-    const dir = join(runtime.currentStateDir, "dispatch-completions");
-    mkdirSync(dir, { recursive: true });
-    const safeId = info.dispatchId.replace(/[^A-Za-z0-9._-]/g, "_");
-    const res = info.res;
-    writeFileSync(
-      join(dir, `${safeId}.json`),
-      JSON.stringify(
-        {
-          dispatchId: info.dispatchId,
-          agent: info.agentType,
-          status: res?.success ? "success" : "failed",
-          exitCode: res?.exitCode ?? 1,
-          durationMs: res?.durationMs ?? Date.now() - info.startTime,
-          startedAt: new Date(info.startTime).toISOString(),
-          finishedAt: new Date().toISOString(),
-          model: res?.model ?? info.paramsModel,
-          provider: res?.provider ?? info.paramsProvider,
-          error: res?.error,
-          task: info.task.slice(0, 200),
-          outputTail: res?.output ? res.output.slice(-2000) : undefined,
-          stderrTail: res?.stderr ? res.stderr.slice(-500) : undefined,
-          // Sprint 5.17: resilience audit trail for Fleet/audit surfaces.
-          ...(info.retryMeta && info.retryMeta.length > 0
-            ? { retries: info.retryMeta.map((a) => ({
-                attempt: a.index,
-                kind: a.kind,
-                action: a.action,
-                fromModel: a.fromModel,
-                toModel: a.toModel,
-                reason: a.reason,
-                compacted: a.compacted,
-                success: a.success,
-              })) }
-            : {}),
-        },
-        null,
-        2,
-      ),
-    );
-  } catch {
-    /* non-fatal */
-  }
 }
 
 const DispatchParams = Type.Object({
@@ -327,6 +234,18 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       const dispatchId = `${toolCallId}-${Date.now()}`;
       const startTime = Date.now(); // execute()'s clock (updateLive durations)
       runtime?.dispatchStarted(agentType);
+      // Sprint 5.28 (LIVE_DISPATCH_CONTROL §4.1): the registry keys this
+      // dispatch on an AbortController — controlDispatch aborts it (SIGTERM→
+      // SIGKILL via spawnAgent's signal handler) to pause/stop/cancel or to
+      // supersede for a respawn. The outer tool signal (if any) is chained in.
+      const ctrl = new AbortController();
+      if (signal) signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+      dispatchRegistry.register({
+        dispatchId, agent: agentType, task: params.task,
+        model: params.model, provider: params.provider, cwd: params.cwd,
+        tools: effectiveTools, abort: ctrl, phase: "live", liveSnapshot: null,
+        log: [], createdAt: Date.now(), updatedAt: Date.now(), spawnCount: 1,
+      });
       let res;
       // Sprint 5.17 (§6.1): resilience result (attempts/total) survives into
       // the finally for the completion-file audit trail.
@@ -420,84 +339,108 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
           provider: params.provider,
           cwd: params.cwd,
           tools: effectiveTools, // Sprint 5.15: physically enforced permission
-          signal: signal ?? undefined,
+          signal: ctrl.signal,
           // Sprint 5.17: resolved policy/chain + the live→src adapter the
           // durability loop uses to rebuild the compacted continuation.
           config: runtime?.config ?? loadConfig(),
           policy: retryPolicy,
           chain: fallbackChain,
-          toLiveProgress: (id) => liveToProgress(getLive(id)),
-          onProgress: (info) => {
-            if (info.rawJsonLine) {
-              const event = parseJsonlLine(info.rawJsonLine);
-              if (event) updateLive(dispatchId, event, startTime);
-              // Sprint 5.14 (DESIGN_WORKER_STATUS.md §2.2): run every raw
-              // stream line through the pure WorkerStatus machine. Accepted
-              // transitions advance the store + publish the richer
-              // agent_status on the bus; the BLOCKED/ready phases also
-              // mirror into flat onUpdate text so headless runs see WHY a
-              // dispatch is paused (the card reads them from the store).
-              // Best-effort: detection never blocks the happy path.
-              try {
-                const prev = getLive(dispatchId)?.status ?? "spawning";
-                const next = mapEventToStatus(info.rawJsonLine, prev);
-                if (next !== prev) {
-                  setWorkerStatus(dispatchId, next);
-                  const phaseNote =
-                    next === "trust_required" ? "  🔒 blocked: workspace-trust confirmation required"
-                    : next === "tool_permission" ? "  🔑 blocked: tool-permission grant pending"
-                    : next === "ready_for_prompt" ? "  › sub-agent up, prompt queued…"
-                    : null;
-                  if (phaseNote) {
-                    emit(`ithacus — ${agentType}${info.model ? ` · ${info.model}` : ""}\n${phaseNote}`, {
-                      agent: agentType, exitCode: -1, durationMs: 0, success: false,
-                      model: info.model ?? params.model, provider: params.provider,
-                    });
-                  }
-                }
-              } catch { /* status detection is best-effort — the stream wins */ }
-            }
-            // Flat-text fallback keeps the pre-5.13 visible phases only; the
-            // raw "json" pass-through line itself is consumed by the store.
-            if (info.phase === "json") return;
-            const modelTag = info.model ? ` · ${info.model}` : "";
-            const line = info.phase === "tool" ? `  → ${info.text}`
-              : info.phase === "text" ? `  … ${info.text.slice(-200)}`
-              : info.phase === "message_end" ? `  ✓ done`
-              : `  · ${info.phase}`;
-            emit(`ithacus — ${agentType}${modelTag}\n${line}`, {
-              agent: agentType, exitCode: -1, durationMs: 0, success: false,
-              model: info.model ?? params.model, provider: params.provider,
-            });
-          },
+          toLiveProgress: (id) => toLiveProgress(getLive(id)),
+          // Sprint 5.28 (§4.3): SHARED childOnProgress pipeline (live store +
+          // WorkerStatus machine + flat-text fallback) — the same one the
+          // control respawns (resume/retry/swap) use, so a respawned child
+          // drives the identical card/bus path as the original dispatch.
+          onProgress: childOnProgress({
+            dispatchId, agent: agentType, model: params.model, provider: params.provider,
+            startTime,
+            emit: (text, c) => emit(text, {
+              agent: c.agent, exitCode: c.exitCode, durationMs: c.durationMs,
+              success: c.success, model: c.model, provider: c.provider,
+            }),
+          }),
         });
         res = resilience.result;
-      } finally {
-        // Sprint 5.13 §3.3 (4): flip the store to its terminal state — the
-        // card paints ✓/✗, holds 3s, then auto-dismisses (its dismiss path
-        // calls removeLive, purging the snapshot). Sprint 5.14: hand the
-        // classifier the exit evidence (exit code + stderr/output tail
-        // slices) so failureKind is real, not the 5.13 "unknown" floor.
-        endLive(dispatchId, res?.success ?? false, res?.error, {
-          exitCode: res?.exitCode,
-          stderrTail: res?.stderr ? res.stderr.slice(-512) : undefined,
-          outputTail: res?.output ? res.output.slice(-512) : undefined,
-        });
+      // Sprint 5.28 (§4.5) control-aware ending: inspect the registry phase
+      // after the awaited child returns. controlDispatch toggled the phase for
+      // pause/stop/cancel/respawn BEFORE this continuation ran (single-threaded
+      // ordering — abort() then respawn are synchronous; this async continuation
+      // always observes the final registry state).
+      const ac = dispatchRegistry.get(dispatchId);
+      if (ac?.phase === "paused") {
+        // Pause: keep registered + card (status already "paused"), no
+        // completion, NO endLive/markDone — a later resume reuses the dispatch.
+        return {
+          content: [{ type: "text" as const, text: `ithacus — ${ac.agent}\n⏸ paused by control — /ithacus-ctrl resume ${dispatchId} to continue` }],
+          details: { agent: ac.agent, exitCode: -1, durationMs: 0, success: false, model: ac.model, provider: ac.provider },
+        };
+      }
+      if (ac?.phase === "terminating") {
+        const terminal = ac.terminal ?? "stopped";
+        // stop (KEEP) writes a completion with statusOverride:"stopped"; cancel
+        // (DISCARD) omits the artifact entirely (its only audit is the control
+        // events.log line emitted by controlDispatch).
+        if (terminal === "stopped") {
+          writeDispatchCompletion(runtime, {
+            cwd: ctx.cwd, dispatchId, agentType, res: undefined, startTime,
+            task: params.task, paramsModel: params.model, paramsProvider: params.provider,
+            statusOverride: "stopped",
+          });
+        }
+        endLiveControl(dispatchId, terminal); // sets stopped/cancelled + clears store
         cardRef.current?.markDone();
         runtime?.dispatchEnded(agentType);
-        // Durable audit trail: every dispatch leaves a completion file at
-        // <repo>/.pi/ithacus/dispatch-completions/<id>.json (best-effort).
-        writeDispatchCompletion(runtime, {
-          cwd: ctx.cwd,
-          dispatchId,
-          agentType,
-          res,
-          startTime,
-          task: params.task,
-          paramsModel: params.model,
-          paramsProvider: params.provider,
-          retryMeta: resilience?.attempts,
-        });
+        dispatchRegistry.deregister(dispatchId);
+        return {
+          content: [{ type: "text" as const, text: `ithacus — ${ac.agent}\n${terminal === "stopped" ? "■ stopped" : "✕ cancelled"} by control` }],
+          details: { agent: ac.agent, exitCode: -1, durationMs: 0, success: false, model: ac.model, provider: ac.provider },
+        };
+      }
+      if (ac && ac.spawnCount > 1) {
+        // Superseded by a control respawn (resume/restart/retry/swap): its
+        // runControlledChild owns the new child's ending + completion. Report
+        // the handoff here and do NOT tear anything down.
+        return {
+          content: [{ type: "text" as const, text: `ithacus — ${ac.agent}\n↻ superseded by control (resume/retry/swap) — ${dispatchId}` }],
+          details: { agent: ac.agent, exitCode: -1, durationMs: 0, success: false, model: ac.model, provider: ac.provider },
+        };
+      }
+      // Natural terminal:
+      // Sprint 5.13 §3.3 (4): flip the store to its terminal state — the
+      // card paints ✓/✗, holds 3s, then auto-dismisses (its dismiss path
+      // calls removeLive, purging the snapshot). Sprint 5.14: hand the
+      // classifier the exit evidence (exit code + stderr/output tail
+      // slices) so failureKind is real, not the 5.13 "unknown" floor.
+      endLive(dispatchId, res?.success ?? false, res?.error, {
+        exitCode: res?.exitCode,
+        stderrTail: res?.stderr ? res.stderr.slice(-512) : undefined,
+        outputTail: res?.output ? res.output.slice(-512) : undefined,
+      });
+      cardRef.current?.markDone();
+      runtime?.dispatchEnded(agentType);
+      // Durable audit trail: every dispatch leaves a completion file at
+      // <repo>/.pi/ithacus/dispatch-completions/<id>.json (best-effort).
+      writeDispatchCompletion(runtime, {
+        cwd: ctx.cwd,
+        dispatchId,
+        agentType,
+        res,
+        startTime,
+        task: params.task,
+        paramsModel: params.model,
+        paramsProvider: params.provider,
+        retryMeta: resilience?.attempts,
+      });
+      dispatchRegistry.deregister(dispatchId);
+      } finally {
+        // Throw-safety fallback: if dispatchWithResilience itself threw before
+        // the natural path above ran, still resolve the card + counters
+        // (guarded so the control returns above never double-tear-down).
+        const fb = dispatchRegistry.get(dispatchId);
+        if (fb && fb.phase === "live" && fb.spawnCount <= 1 && res === undefined) {
+          endLive(dispatchId, false, "dispatch threw", { exitCode: 1 });
+          cardRef.current?.markDone();
+          runtime?.dispatchEnded(agentType);
+        }
       }
       // Final result: a visible status header (agent/model/duration/status)
       // PREPENDED to the child's output — so the parent LLM and any tool

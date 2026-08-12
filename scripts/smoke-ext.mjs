@@ -440,8 +440,8 @@ try {
   const registryMod = await import(join(tmpDir, "ithacus-tool-registry.ts"));
   check("tv.registry mailbox PUBLIC", registryMod.TOOL_VISIBILITY["ithacus-mailbox"] === 0);
   check("tv.registry dispatch INTERNAL", registryMod.TOOL_VISIBILITY["ithacus-dispatch"] === 1);
-  check("tv.registry availableToolNames interactive has both",
-    registryMod.availableToolNames().sort().join(",") === "ithacus-dispatch,ithacus-mailbox");
+  check("tv.registry availableToolNames interactive has all",
+    registryMod.availableToolNames().sort().join(",") === "ithacus-control,ithacus-dispatch,ithacus-mailbox");
   check("tv.registry availableToolNames child has only mailbox",
     registryMod.availableToolNames(registryMod.currentCallerContext({ ITHACUS_AGENT_ID: "explore" })).join(",") === "ithacus-mailbox");
 
@@ -917,6 +917,152 @@ try {
       process.chdir(tmpDir); // restore the harness cwd before removing pubDir
       try { rmSync(pubDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  }
+
+  // ---- Sprint 5.28 — live dispatch control (ithacus-control.ts / -tool.ts) --
+  // Exerts the AbortController-driven control verbs (pause/resume/stop/cancel/
+  // retry/swap_model/split_task) over a fake-spawned resilient child, the
+  // module-level dispatch registry, the live store, and completion artifacts.
+  // No real pi, no network (PREVENT-ITH-004).
+  {
+    const ctlMod = await import(join(tmpDir, "ithacus-control.ts"));
+    const liveMod5 = await import(join(tmpDir, "ithacus-live.ts"));
+    const ctlToolMod = await import(join(tmpDir, "ithacus-control-tool.ts"));
+    const ctlSink = [];
+    liveMod5.wireLiveEventBus({ publish: (e) => ctlSink.push(e), subscribe: () => () => {}, history: () => [] });
+
+    // Hermetic control runtime (config supplied → no loadConfig/env dependence).
+    const mkRuntime = () => ({
+      config: {
+        retryPolicy: { maxRetries: 0 },
+        modelFallbackChain: [],
+        maxFallbackHops: 0,
+        preserveRecent: 3,
+        permissionModeDefault: "read_only",
+        permissionStrict: false,
+      },
+      appendEvent: () => {},
+      bindRepo: () => {},
+      dispatchStarted: () => {},
+      dispatchEnded: () => {},
+      currentStateDir: tmpDir,
+      store: undefined,
+      version: "0.0.0",
+    });
+
+    const reg = (id, over = {}) => ctlMod.dispatchRegistry.register({
+      dispatchId: id, agent: "explore", task: "control task",
+      model: "claude-haiku-4-5", provider: "test",
+      abort: new AbortController(), phase: "live", liveSnapshot: null, log: [],
+      createdAt: Date.now(), updatedAt: Date.now(), spawnCount: 1, ...over,
+    });
+
+    check("ctl.list empty at start", ctlMod.dispatchRegistry.list().length === 0);
+
+    // pause — abort child, keep registry + card, set paused status
+    const idP = "smoke-5.28-pause";
+    liveMod5.startLive(idP, "explore", "claude-haiku-4-5", "pause me", 0, 0);
+    liveMod5.setWorkerStatus(idP, "working");
+    reg(idP);
+    const pAct = await ctlMod.controlDispatch("pause", idP, {}, {});
+    check("ctl.pause ok", pAct.result === "ok");
+    check("ctl.pause aborted controller", ctlMod.dispatchRegistry.get(idP)?.abort.signal.aborted === true);
+    check("ctl.pause phase paused", ctlMod.dispatchRegistry.get(idP)?.phase === "paused");
+    check("ctl.pause live status paused", liveMod5.getLive(idP)?.status === "paused");
+    check("ctl.pause audit logged", ctlMod.dispatchRegistry.get(idP)?.log.some((a) => a.verb === "pause" && a.result === "ok"));
+    const pAct2 = await ctlMod.controlDispatch("pause", idP, {}, {});
+    check("ctl.pause already-paused no-op", pAct2.result === "no-op");
+
+    // resume from paused → spawns a child, completes, deregisters + completion
+    const idR = "smoke-5.28-resume";
+    liveMod5.startLive(idR, "explore", "claude-haiku-4-5", "resume me", 0, 0);
+    liveMod5.pauseLive(idR);
+    reg(idR, { phase: "paused" });
+    let rSpawn = 0;
+    const rAct = await ctlMod.controlDispatch("resume", idR, {}, {
+      runtime: mkRuntime(),
+      spawnImpl: (_c, _a, _o) => { rSpawn++; return makeFakeProc({ stdoutLines: [messageEndEvent("resumed ok")] }); },
+    });
+    check("ctl.resume ok", rAct.result === "ok");
+    check("ctl.resume spawned child", rSpawn === 1);
+    check("ctl.resume continuation built", rAct.continuation === true);
+    check("ctl.resume deregistered after finish", ctlMod.dispatchRegistry.get(idR) === undefined);
+    check("ctl.resume live done", liveMod5.getLive(idR)?.status === "done");
+    check("ctl.resume wrote completion", existsSync(join(tmpDir, "dispatch-completions", idR + ".json")));
+
+    // swap_model — kill + respawn with the new model, same dispatchId
+    const idS = "smoke-5.28-swap";
+    liveMod5.startLive(idS, "plan", "old-model", "swap me", 0, 0);
+    reg(idS, { agent: "plan", model: "old-model" });
+    let sSpawn = 0;
+    const sAct = await ctlMod.controlDispatch("swap_model", idS, { model: "new-model" }, {
+      runtime: mkRuntime(),
+      spawnImpl: (_c, _a, _o) => { sSpawn++; return makeFakeProc({ stdoutLines: [messageEndEvent("swapped")] }); },
+    });
+    check("ctl.swap ok", sAct.result === "ok");
+    check("ctl.swap toModel", sAct.toModel === "new-model");
+    check("ctl.swap spawned", sSpawn === 1);
+    check("ctl.swap deregistered", ctlMod.dispatchRegistry.get(idS) === undefined);
+
+    // stop / cancel — phase→terminating + terminal, resolveLive untouched
+    const idT = "smoke-5.28-stop";
+    liveMod5.startLive(idT, "explore", undefined, "stop me", 0, 0);
+    liveMod5.setWorkerStatus(idT, "working");
+    reg(idT);
+    const tAct = await ctlMod.controlDispatch("stop", idT, {}, { runtime: mkRuntime() });
+    check("ctl.stop ok", tAct.result === "ok");
+    check("ctl.stop phase terminating", ctlMod.dispatchRegistry.get(idT)?.phase === "terminating");
+    check("ctl.stop terminal stopped", ctlMod.dispatchRegistry.get(idT)?.terminal === "stopped");
+    check("ctl.stop live stopping", liveMod5.getLive(idT)?.status === "stopping");
+    const tAct2 = await ctlMod.controlDispatch("stop", idT, {}, {});
+    check("ctl.stop re-stop no-op", tAct2.result === "no-op");
+
+    const idC = "smoke-5.28-cancel";
+    liveMod5.startLive(idC, "explore", undefined, "cancel me", 0, 0);
+    liveMod5.setWorkerStatus(idC, "working");
+    reg(idC);
+    const cAct = await ctlMod.controlDispatch("cancel", idC, {}, { runtime: mkRuntime() });
+    check("ctl.cancel ok", cAct.result === "ok");
+    check("ctl.cancel terminal cancelled", ctlMod.dispatchRegistry.get(idC)?.terminal === "cancelled");
+
+    // endLiveControl (execute() teardown path) publishes + removes snapshot
+    const idE = "smoke-5.28-end";
+    liveMod5.startLive(idE, "explore", undefined, "x", 0, 0);
+    liveMod5.endLiveControl(idE, "stopped");
+    check("ctl.endLive agent_done stopped",
+      ctlSink.some((e) => e.type === "agent_done" && e.runId === idE && e.status === "stopped"));
+    check("ctl.endLive removes snapshot", liveMod5.getLive(idE) === undefined);
+
+    // split_task (add_agent) — fan out a NEW dispatch, parent stays live
+    const idSp = "smoke-5.28-split";
+    liveMod5.startLive(idSp, "explore", "claude-haiku-4-5", "parent", 0, 0);
+    reg(idSp);
+    let spSpawn = 0;
+    const spAct = await ctlMod.controlDispatch("split_task", idSp, { task: "child subtask", agent: "explore" }, {
+      runtime: mkRuntime(),
+      spawnImpl: (_c, _a, _o) => { spSpawn++; return makeFakeProc({ stdoutLines: [messageEndEvent("child done")] }); },
+    });
+    check("ctl.split ok", spAct.result === "ok");
+    check("ctl.split spawned child", spSpawn === 1);
+    check("ctl.split spawns new id", spAct.spawnedDispatchId?.startsWith(idSp + "-split-"));
+    check("ctl.split child deregistered", ctlMod.dispatchRegistry.get(spAct.spawnedDispatchId) === undefined);
+    check("ctl.split parent stays live", ctlMod.dispatchRegistry.get(idSp)?.phase === "live");
+
+    // error / no-op paths
+    const e1 = await ctlMod.controlDispatch("pause", "nope-5.28", {}, {});
+    check("ctl unknown dispatch error", e1.result === "error");
+    const e2 = await ctlMod.controlDispatch("swap_model", idP, {}, {}); // paused, no model → error
+    check("ctl swap without model error", e2.result === "error");
+    const e3 = await ctlMod.controlDispatch("split_task", idSp, { agent: "explore" }, {}); // no task
+    check("ctl split without task error", e3.result === "error");
+
+    // control TOOL registration (INTERNAL)
+    let ctrlTool = null;
+    ctlToolMod.registerControlTool(
+      { registerTool: (t) => { ctrlTool = t; }, registerCommand: () => {}, on: () => {}, setModel: () => {} },
+      mkRuntime(),
+    );
+    check("ctl.tool registers ithacus-control", ctrlTool?.name === "ithacus-control");
   }
 
   // ---- Sprint 5.27 §3.4 — loopback-only web dashboard (ithacus-web.ts) ------

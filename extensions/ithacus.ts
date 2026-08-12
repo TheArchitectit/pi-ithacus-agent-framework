@@ -15,6 +15,7 @@ import { registerEventHandlers } from "./ithacus-events/register.js";
 import { registerTeamCommands } from "./ithacus-commands.js";
 import { registerDispatchTool } from "./ithacus-dispatch.js";
 import { registerMailboxTool } from "./ithacus-message.js";
+import { registerControlTool } from "./ithacus-control-tool.js";
 import { registerSetupCommand } from "./ithacus-setup.js";
 import { registerMenuCommand } from "./ithacus-menu.js";
 import { registerWebCommand } from "./ithacus-web.js";
@@ -59,6 +60,9 @@ export default function (pi: ExtensionAPI) {
   // Task #16: inter-agent mailbox (claw-code PR e96c6675 pattern) — shared
   // ith_inbox table, agents address each other by ITHACUS_AGENT_ID env name.
   registerMailboxTool(pi, runtime);
+  // Sprint 5.28: live-dispatch control INTERNAL tool over the same core as
+  // the /ithacus-ctrl slash command.
+  registerControlTool(pi, runtime);
   // `/ithacus-setup`: bind models+providers to roles + scaffold new agents.
   registerSetupCommand(pi);
   // Sprint 5.11: `/ithacus-menu` — persistent status overlay (version, crew,

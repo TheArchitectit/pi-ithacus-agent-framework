@@ -253,6 +253,15 @@ const STATUS_ROW: Readonly<Record<WorkerStatus, { icon: string; label: string; c
   // Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §6.5): retrying is an
   // ACTIVE phase — ↻ with the attempt counter (attempt/maxRetries) appended.
   retrying: { icon: "↻", label: "retrying", color: "warning" },
+  // Sprint 5.28 (LIVE_DISPATCH_CONTROL §7.4): control-lifecycle statuses —
+  // paused (⏸, resumable) / stopping (■) / swapped (⇄) / splitting (✂) are
+  // transient UI states; stopped (■) and cancelled (✕) are terminal controls.
+  paused: { icon: "⏸", label: "paused", color: "warning" },
+  stopping: { icon: "■", label: "stopping", color: "warning" },
+  swapped: { icon: "⇄", label: "swapped", color: "accent" },
+  splitting: { icon: "✂", label: "splitting", color: "accent" },
+  stopped: { icon: "■", label: "stopped", color: "warning" },
+  cancelled: { icon: "✕", label: "cancelled", color: "muted" },
   done: { icon: "✓", label: "done", color: "success" },
   failed: { icon: "✗", label: "failed", color: "error" },
 };

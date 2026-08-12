@@ -27,6 +27,7 @@ import type { IthacusEvent, WorkerFailureKind, WorkerStatus } from "../src/event
 import type { IthacusEventBus } from "../src/event-bus.js";
 import { canTransition, classifyFailure, type WorkerFailureSignals } from "../src/worker-status.js";
 import { redactSecrets } from "../src/redact.js";
+import type { LiveProgress } from "../src/auto-compact.js";
 
 // ---------------------------------------------------------------------------
 // Public types (DESIGN_LIVE_PROGRESS.md §3.1)
@@ -413,3 +414,61 @@ export function onLiveChanged(fn: () => void): () => void {
     listeners.delete(fn);
   };
 }
+
+// ---------------------------------------------------------------------------
+// Sprint 5.28 — pause + LiveProgress adapter (§4.3)
+// ---------------------------------------------------------------------------
+
+/** Sprint 5.28: flip a live dispatch to the "paused" WorkerStatus (the card
+ *  shows ⏸ instead of ❌). Best-effort: no entry / non-transitionable → no-op.
+ *  The snapshot is NOT removed — it stays registered for resume/retry. */
+export function pauseLive(id: string): void {
+  const entry = live.get(id);
+  if (!entry) return;
+  if (advanceStatus(id, entry, "paused")) notify();
+}
+
+/** Sprint 5.28: adapt an AgentLive snapshot to the src/auto-compact.ts
+ *  LiveProgress shape used by buildContinuationSummary for resume/retry/swap
+ *  continuation summaries. Null-safe → control.ts always passes a fallback. */
+export function toLiveProgress(l: AgentLive | undefined): LiveProgress {
+  return {
+    agent: l?.agent ?? "unknown",
+    model: l?.model,
+    recentTools: (l?.recentTools ?? []).slice(-5).map((t) => ({ tool: t.tool, args: t.args ?? "" })),
+    toolCallCount: l?.toolCallCount ?? 0,
+    tokensIn: l?.tokensIn ?? 0,
+    tokensOut: l?.tokensOut ?? 0,
+    filesAccessed: l?.filesAccessed ?? [],
+  };
+}
+
+/** Sprint 5.28: capture an immutable LiveProgress snapshot of a dispatch's
+ *  tail (also survives removeLive/deregister) for the registry's liveSnapshot
+ *  so a later resume/retry can build its continuation summary. */
+export function snapshotLiveProgress(id: string): LiveProgress | null {
+  const entry = live.get(id);
+  return entry ? toLiveProgress(entry) : null;
+}
+
+/** Sprint 5.28: flip a live dispatch to a CONTROL terminal state (stopped /
+ *  cancelled) — sets status directly, ends the error-free lifecycle (no
+ *  failureKind), publishes agent_done + run_finished, then removes the
+ *  snapshot so the card dismisses and the registry can deregister. Best-effort.*/
+export function endLiveControl(id: string, terminal: "stopped" | "cancelled"): void {
+  const entry = live.get(id);
+  if (!entry) return;
+  entry.status = terminal;
+  entry.error = terminal === "stopped" ? "stopped by user" : "cancelled by user";
+  entry.durationMs = Math.max(0, Date.now() - entry.startedAt);
+  entry.currentTool = undefined;
+  entry.currentToolArgs = undefined;
+  const ts = Date.now();
+  publish({ type: "agent_done", runId: id, agentId: entry.agent, status: terminal, ts });
+  publish({ type: "run_finished", runId: id, status: terminal, ts });
+  notify();
+  live.delete(id);
+  notify();
+}
+
+

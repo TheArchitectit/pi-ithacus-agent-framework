@@ -19,7 +19,6 @@
  * carries the `// guardrails-allow` annotation in ithacus-spawn.ts). `sleep`
  * is timers, not network.
  */
-
 import { spawnAgent } from "./ithacus-spawn.js";
 import type { SpawnAgentOpts, SpawnAgentResult } from "./ithacus-spawn.js";
 import { setWorkerStatus, markRetry, getLive } from "./ithacus-live.js";
@@ -31,7 +30,6 @@ import { DEFAULT_BACKOFF } from "../src/team.js";
 import { routeFallback, type FallbackAction } from "../src/model-fallback.js";
 import { buildContinuationSummary, type LiveProgress } from "../src/auto-compact.js";
 import { classifyFailureKind } from "../src/failure-kind.js";
-
 export interface RetryHopRecord {
   index: number;
   kind: string;
@@ -45,7 +43,6 @@ export interface RetryHopRecord {
   success: boolean;
   durationMs: number;
 }
-
 export interface DispatchResilienceOpts {
   dispatchId: string;
   agent: string;
@@ -65,7 +62,6 @@ export interface DispatchResilienceOpts {
   /** Test seam: inject a fake spawn (passed through to spawnAgent). */
   spawnImpl?: SpawnAgentOpts["spawnImpl"];
 }
-
 export interface ResilienceResult {
   result: SpawnAgentResult;
   attempts: RetryHopRecord[];
@@ -73,7 +69,6 @@ export interface ResilienceResult {
   finalModel?: string;
   finalProvider?: string;
 }
-
 /** AbortSignal-aware sleep (timers live HERE, not in src/ — G7). Rejects on
  *  abort so the loop stops promptly instead of blocking cancellation. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -93,13 +88,11 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
-
 /** Resolve a provider pin from a model's provider/ prefix, if present. */
 function resolveProviderPrefix(model: string): string | undefined {
   const idx = model.indexOf("/");
   return idx > 0 ? model.slice(0, idx) : undefined;
 }
-
 /** Compute the next hop index by failure class (mirrors model-fallback's
  *  preference; advance always lands on a real hop here). */
 function nextHopIndex(
@@ -122,7 +115,6 @@ function nextHopIndex(
   }
   return rest.length > 0 ? currentHopIndex + 1 : -1;
 }
-
 /**
  * Realize a `compact_retry_same` action: apply the backoff sleep (for transient
  * kinds) and, for context_window, rebuild the compacted task from durable state
@@ -153,7 +145,6 @@ async function realizeCompactRetry(
   }
   return { task, compacted };
 }
-
 /** Audit one retry/fallback hop: events.log (dispatch_retry/model_fallback) +
  *  ith_retries table + the completion record the loop carries. */
 function auditRetry(
@@ -216,7 +207,6 @@ function auditRetry(
     /* store audit is best-effort — never breaks the loop */
   }
 }
-
 /**
  * Run one resilient dispatch: spawn a FRESH child per attempt, classify
  * failures, decide retry/fallback/compact via the pure src/ policies, and loop
@@ -233,7 +223,6 @@ export async function dispatchWithResilience(
   let current = { model: opts.model, provider: opts.provider };
   const attempts: RetryHopRecord[] = [];
   const maxRetries = opts.policy.maxRetries;
-
   let res: SpawnAgentResult = await spawnAgent({
     agent: opts.agent,
     task,
@@ -256,20 +245,27 @@ export async function dispatchWithResilience(
     success: res.success,
     durationMs: res.durationMs,
   });
-
   while (!res.success) {
+    // Sprint 5.28 (§4.4): a user-initiated abort (controlDispatch's
+    // AbortController → SIGTERM/SIGKILL) must NEVER auto-resume via the 5.17
+    // retry/auto-compact/fallback loop — pause dance again, stop stays dead.
+    // Break out immediately; the dispatch execute()'s control-aware ending
+    // performs the pause/stop/cancel teardown from the registry phase.
+    if (opts.signal?.aborted) {
+      attempts[attempts.length - 1].kind = "aborted";
+      attempts[attempts.length - 1].reason = "aborted by control (pause/stop/cancel)";
+      break;
+    }
     const kind = classifyFailureKind({
       exitCode: res.exitCode,
       stderrTail: res.stderr ? res.stderr.slice(-512) : undefined,
       outputTail: res.output ? res.output.slice(-512) : undefined,
       lastStatus: getLive(opts.dispatchId)?.status,
     });
-
     if (!shouldRetry(kind, attempt, opts.policy)) {
       attempts[attempts.length - 1].kind = kind;
       break;
     }
-
     const action = routeFallback({
       kind,
       chain: opts.chain,
@@ -277,24 +273,20 @@ export async function dispatchWithResilience(
       attempt,
       policy: opts.policy,
     });
-
     if (action.type === "stop") {
       attempts[attempts.length - 1].kind = kind;
       attempts[attempts.length - 1].reason = action.reason;
       break;
     }
-
     // RETRY BRANCH — fresh child, durable-state rebuild.
     attempt++;
     setWorkerStatus(opts.dispatchId, "retrying");
     markRetry(opts.dispatchId, attempt, maxRetries);
     const hopStartedAt = Date.now();
-
     let nextModel = current.model;
     let nextProvider = current.provider;
     let compacted = false;
     let reason = action.reason;
-
     if (action.type === "advance") {
       const next = nextHopIndex(opts.chain, hopIndex, kind);
       if (next < 0) {
@@ -308,7 +300,21 @@ export async function dispatchWithResilience(
       nextProvider = hop.provider ?? resolveProviderPrefix(hop.model);
     } else {
       // compact_retry_same
-      const rebuilt = await realizeCompactRetry(opts, kind, attempt, task);
+      let rebuilt: { task: string; compacted: boolean } = { task, compacted: false };
+      try {
+        rebuilt = await realizeCompactRetry(opts, kind, attempt, task);
+        if (opts.signal?.aborted) {
+          attempts[attempts.length - 1].kind = "aborted";
+          attempts[attempts.length - 1].reason = "aborted by control";
+          break;
+        }
+      } catch (e) {
+        // realization's abort-aware sleep can reject on a user abort — treat
+        // as control-abort (never let it throw out of the resilience loop).
+        attempts[attempts.length - 1].kind = "aborted";
+        attempts[attempts.length - 1].reason = e instanceof Error ? e.message : "aborted by control";
+        break;
+      }
       task = rebuilt.task;
       compacted = rebuilt.compacted;
     }
@@ -336,10 +342,17 @@ export async function dispatchWithResilience(
     attempts[attempts.length - 1].toModel = nextModel;
     attempts[attempts.length - 1].toProvider = nextProvider;
     attempts[attempts.length - 1].compacted = compacted;
-
     // Hard caps: attempt budget (1 + maxRetries) and distinct-model cap.
     if (attempt >= 1 + maxRetries) break;
     if (hopIndex >= opts.chain.maxHops) break;
+
+    // Sprint 5.28-§4.4: re-check abort right before respawning a fresh child
+    // so a just-issued pause/stop/cancel never starts a NEW child.
+    if (opts.signal?.aborted) {
+      attempts[attempts.length - 1].kind = "aborted";
+      attempts[attempts.length - 1].reason = "aborted by control";
+      break;
+    }
 
     res = await spawnAgent({
       agent: opts.agent,

@@ -33,6 +33,16 @@ export type WorkerStatus =
   | "ready_for_prompt"     // child up, prompt queued, not yet running
   | "working"              // actively processing (tokens flowing)
   | "retrying"             // Sprint 5.17: a failed attempt is being retried (fresh child / fallback hop)
+  // Sprint 5.28 (docs/SPRINT_5_28_LIVE_DISPATCH_CONTROL.md §5.1): live dispatch
+  // control states — the card/bus render ⏸ paused / ■ stopped / ✕ cancelled /
+  // ⇄ swapped / ⑂ splitting. `stopped`/`cancelled` are TERMINAL (user-initiated);
+  // `paused`/`stopping`/`swapped`/`splitting` are resting/transient.
+  | "paused"                // dispatch suspended by user; child killed, tail preserved
+  | "stopping"              // graceful kill in progress (SIGTERM sent, awaiting exit)
+  | "swapped"               // swap-model/agent respawn in progress (transient)
+  | "splitting"             // split spawn in progress (transient, leads to a new child)
+  | "stopped"               // terminal: user-initiated abort + KEEP completion
+  | "cancelled"             // terminal: user-initiated abort + DISCARD completion
   | "done"                 // finished successfully
   | "failed";              // finished with error
 
@@ -70,5 +80,5 @@ export type IthacusEvent =
   | { type: "tool_execution_end"; runId: string; agentId: string;
       tool: string; ok: boolean; durationMs: number; ts: number }
   | { type: "agent_done"; runId: string; agentId: string;
-      status: "done" | "failed"; failureKind?: WorkerFailureKind; ts: number }
+      status: "done" | "failed" | "stopped" | "cancelled"; failureKind?: WorkerFailureKind; ts: number }
   | { type: "run_finished"; runId: string; status: string; ts: number };
