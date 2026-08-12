@@ -280,7 +280,21 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
   // the child args — it's what makes the child emit the structured JSONL
   // events (tool_execution_start/end, message_end+usage) the live store
   // parses in real time. Already wired since the dispatch tool landed.
-  const args: string[] = ["--mode", "json", "-p", "--no-session"];
+  const args: string[] = [
+    "--mode", "json", "-p", "--no-session",
+    // FAIL-6c4a2d11: children MUST run in an isolated extension context. When
+    // ithacus is npm-installed (global or project scope), the child pi process
+    // auto-discovers and loads the full ithacus.js entry — which registers the
+    // PUBLIC `ithacus-mailbox` tool — and our explicit `-e` of
+    // ithacus-child-mailbox then double-registers the same tool name. pi's
+    // extension loader hard-fails on duplicate tool names and the child exits
+    // 1 before the task even starts (the 0.6.5 dispatch-killing bug).
+    // `--no-extensions` disables discovery while still honoring the explicit
+    // `-e` (pi CLI composes `--no-*` with explicit flags), giving every child
+    // a deterministic toolset — this also keeps other extensions' startup
+    // banners out of the child's JSONL stream that spawnAgent parses.
+    "--no-extensions",
+  ];
   // Load the ithacus mailbox extension into the child (see CHILD_MAILBOX_EXTENSION).
   // Required so `--tools` below does not drop the unregistered `ithacus-mailbox`.
   // Guard: only pass `-e` when the sibling actually exists. A stale/absent path

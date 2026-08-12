@@ -2,14 +2,19 @@
  * ithacus-child-mailbox.ts — minimal extension loaded ONLY into dispatched
  * child pi subprocesses (spawnAgent's `-e` flag, see ithacus-spawn.ts).
  *
- * Why a dedicated file: a dispatched child is a FRESH pi process in the repo
- * cwd. It does not auto-load the full ithacus entry (extensions/ithacus.ts):
- * there is no project-local `.pi/extensions/` and ithacus isn't a globally
- * installed pi package — so `ithacus-mailbox` was never registered in the
- * child, and pi's `--tools` allowlist silently dropped the unknown name,
- * leaving only built-in tools (the Sprint 5.something bug: child transcripts
- * showed no mailbox). Passing `-e <this file>` makes the child load exactly
- * the one PUBLIC tool it needs.
+ * Why a dedicated file: a dispatched child is a FRESH pi process started with
+ * `--no-extensions -e <this file>` (see spawnAgent). Extension DISCOVERY is
+ * disabled in children for two reasons: (1) when ithacus is npm-installed the
+ * child would otherwise auto-load the full ithacus.js entry which ALSO
+ * registers the PUBLIC `ithacus-mailbox` tool — pi hard-fails on duplicate
+ * tool names and every dispatch exits 1 (FAIL-6c4a2d11); (2) other installed
+ * extensions' console.log startup banners would pollute the child's
+ * `--mode json` JSONL stdout stream that spawnAgent parses. Loading exactly
+ * this one file gives children the single PUBLIC tool they need with a
+ * deterministic toolset regardless of install layout (repo source or npm dist).
+ * The original pre-discovery problem stands too: without ANY -e the child's
+ * `--tools` allowlist silently dropped the unregistered `ithacus-mailbox`
+ * name, leaving only built-in tools (child transcripts showed no mailbox).
  *
  * We deliberately do NOT load the full ithacus entry here: it would also pull
  * in commands, the TUI/widget, onboarding, and the loopback dashboard, and

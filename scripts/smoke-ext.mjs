@@ -279,6 +279,15 @@ try {
     "spawn.args -e path exists on disk",
     eIdx !== -1 && existsSync(recordedArgs[eIdx + 1]),
   );
+  // ---- FAIL-6c4a2d11: child must be isolated from ambient extension -------
+  // discovery. When ithacus is npm-installed, the child auto-loads the full
+  // ithacus.js entry (which also registers PUBLIC ithacus-mailbox) → duplicate
+  // tool registration → pi exits 1 before the task starts. --no-extensions +
+  // explicit -e is the documented pi combo for a deterministic child toolset.
+  check(
+    "spawn.args isolates child via --no-extensions",
+    recordedArgs.includes("--no-extensions"),
+  );
   // Simulated published-dist layout: only the .js sibling on disk.
   const distSim = mkdtempSync(join(osTmpdir(), "ith-dist-sim-"));
   writeFileSync(join(distSim, "ithacus-child-mailbox.js"), "// compiled");
