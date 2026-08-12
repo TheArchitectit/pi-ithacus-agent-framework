@@ -64,6 +64,10 @@ export interface IthacusConfig {
   /** Sprint 5.24 (DESIGN_TWO_TIER_POLICY.md): two-tier connectivity policy.
    *  Tier L (Local) always on; Tier R (Remote) opt-in and default OFF. */
   remote: RemoteCapabilities;
+  /** Sprint 5.27 (SPRINT_5_27_UI_OVERLAYS_AND_WEB_TOGGLES.md §3.5): local UI
+   *  feature flags, all DEFAULT ON (opt-out surface). Env ITHACUS_UI >
+   *  project config ".ithacus/config.json" "ui" key > defaults (all on). */
+  ui: UiFlags;
 }
 
 /** Known Tier-R capability ids (Sprint 5.24). Unknown keys are rejected. */
@@ -85,6 +89,88 @@ export const REMOTE_CAP_DEFAULTS: RemoteCapabilities = {
   remoteEnabled: false,
   capabilities: { a2a: false, external_memory: false, mesh: false },
 };
+
+/** Sprint 5.27 §3.5 (SPRINT_5_27_UI_OVERLAYS_AND_WEB_TOGGLES.md): default-ON
+ *  local UI flag ids. Unlike Tier R remote capabilities (default OFF), every
+ *  local UI flag defaults ON; users opt OUT via env ITHACUS_UI or the project
+ *  config ".ithacus/config.json" "ui" key (the web Setup panel writes the
+ *  same key). Unknown keys are rejected. */
+export const UI_FLAG_IDS = ["liveCard", "webUi", "widget", "menuOverlay", "notifications"] as const;
+export type UiFlagId = (typeof UI_FLAG_IDS)[number];
+
+/** The 5.27 local UI flags. All fields default ON. */
+export interface UiFlags {
+  /** Live-progress overlay card (5.13/5.14). */
+  liveCard: boolean;
+  /** Loopback web interface + /ithacus-web command (§3.4). */
+  webUi: boolean;
+  /** Widget / menu presence. */
+  widget: boolean;
+  /** Menu overlay. */
+  menuOverlay: boolean;
+  /** Notifications. */
+  notifications: boolean;
+}
+
+export const UI_FLAG_DEFAULTS: UiFlags = {
+  liveCard: true,
+  webUi: true,
+  widget: true,
+  menuOverlay: true,
+  notifications: true,
+};
+
+/** Parse a `ui` block (the ".ithacus/config.json" "ui" key) into UiFlags.
+ *  Missing keys keep their defaults; unknown keys are rejected; non-boolean
+ *  values throw. Pure — no env, no I/O. */
+export function parseUiFlags(raw: unknown): UiFlags {
+  if (raw == null) return { ...UI_FLAG_DEFAULTS };
+  if (!isRecord(raw)) {
+    throw new Error('"ui" must be an object of UiFlags');
+  }
+  const flags: UiFlags = { ...UI_FLAG_DEFAULTS };
+  for (const key of Object.keys(raw)) {
+    if (!(UI_FLAG_IDS as readonly string[]).includes(key)) {
+      throw new Error(`unknown ui flag: "${key}" (known: ${UI_FLAG_IDS.join(", ")})`);
+    }
+    const val = raw[key];
+    if (typeof val !== "boolean") {
+      throw new Error(`ui flag "${key}" must be a boolean`);
+    }
+    flags[key as UiFlagId] = val;
+  }
+  return flags;
+}
+
+/** Resolve the effective UiFlags from project config + env. Precedence:
+ *  env (ITHACUS_UI = comma-separated "flag:true|false" pairs) > project
+ *  config (".ithacus/config.json" "ui" key) > defaults (all on). Unknown or
+ *  malformed env entries are rejected (throw), never silently accepted. Env
+ *  is re-read on every call (never cached) so a toggle flip is respected on
+ *  the next load. */
+function resolveUiFlags(projectUi: unknown): UiFlags {
+  const resolved = parseUiFlags(projectUi);
+  const envUi = process.env.ITHACUS_UI;
+  if (envUi != null && envUi !== "") {
+    const entries = envUi.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const entry of entries) {
+      const idx = entry.indexOf(":");
+      if (idx <= 0) {
+        throw new Error(`[ithacus] malformed ITHACUS_UI entry: "${entry}" (expected "flag:true|false")`);
+      }
+      const key = entry.slice(0, idx).trim();
+      const val = entry.slice(idx + 1).trim();
+      if (!(UI_FLAG_IDS as readonly string[]).includes(key)) {
+        throw new Error(`[ithacus] unknown ui flag in ITHACUS_UI: "${key}"`);
+      }
+      if (val !== "true" && val !== "false") {
+        throw new Error(`[ithacus] ui flag "${key}" must be true|false, got "${val}"`);
+      }
+      resolved[key as UiFlagId] = val === "true";
+    }
+  }
+  return resolved;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -166,7 +252,7 @@ function envNum(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-export function loadConfig(projectRemote?: unknown): IthacusConfig {
+export function loadConfig(projectRemote?: unknown, projectUi?: unknown): IthacusConfig {
   const rawFb = process.env.ITHACUS_FALLBACK_MODELS;
   const fallbackModels = rawFb
     ? rawFb.split(",").map((s) => s.trim()).filter(Boolean)
@@ -183,6 +269,7 @@ export function loadConfig(projectRemote?: unknown): IthacusConfig {
     permissionModeDefault: normalizePermissionMode(process.env.ITHACUS_PERMISSION_MODE_DEFAULT),
     permissionStrict: envBool("ITHACUS_PERMISSION_STRICT", false),
     remote: resolveRemoteCapabilities(projectRemote),
+    ui: resolveUiFlags(projectUi),
   };
 }
 

@@ -17,6 +17,7 @@ import { registerDispatchTool } from "./ithacus-dispatch.js";
 import { registerMailboxTool } from "./ithacus-message.js";
 import { registerSetupCommand } from "./ithacus-setup.js";
 import { registerMenuCommand } from "./ithacus-menu.js";
+import { registerWebCommand } from "./ithacus-web.js";
 import { registerVersionWidget } from "./ithacus-widget.js";
 import { maybeShowVersionBump, ownVersion } from "./ithacus-version.js";
 import { maybeShowOnLoadNotice } from "./ithacus-onboarding.js";
@@ -63,6 +64,10 @@ export default function (pi: ExtensionAPI) {
   // Sprint 5.11: `/ithacus-menu` — persistent status overlay (version, crew,
   // agents, dashboard snapshot paths). First extension-side TUI wiring.
   registerMenuCommand(pi, runtime);
+  // Sprint 5.27 §3.4: `/ithacus-web` — loopback-only dashboard server
+  // (start|stop|status). Binds 127.0.0.1 only; serves the local UI over
+  // /api/* + SSE from the in-process event bus (PREVENT-ITH-004).
+  registerWebCommand(pi, runtime, config);
   // Sprint 5.11: the above-editor widget — ALWAYS-visible version line (menu
   // bar), so an end user who ran `pi install npm:ithacus` sees the new
   // version without opening anything. Pattern mirrors pi-mega-compact's

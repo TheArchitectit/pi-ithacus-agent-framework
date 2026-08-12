@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The server injects this session's per-instance token here. It is used to
+     authorize state-changing requests back to the same loopback origin. -->
+<meta name="ithacus-token" content="__ITHACUS_TOKEN__">
+<title>ithacus — crew dashboard</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <h1>ithacus</h1>
+    <span class="brand-sub">crew dashboard · loopback view</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="live">Live</button>
+    <button class="tab" data-tab="inbox">Inbox</button>
+    <button class="tab" data-tab="setup">Setup</button>
+    <button class="tab" data-tab="guardrails">Guardrails</button>
+  </nav>
+</header>
+
+<main class="content">
+
+  <!-- Dashboard -->
+  <section class="panel active" id="panel-dashboard">
+    <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-label">Context pressure</span>
+        <span class="stat-value" id="stat-pressure">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Active agents</span>
+        <span class="stat-value" id="stat-agents">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Current turn</span>
+        <span class="stat-value" id="stat-turn">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Running</span>
+        <span class="stat-value" id="stat-running">—</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Context window</h2>
+      <div class="meter"><div class="meter-fill" id="ctx-fill"></div></div>
+      <p class="muted" id="ctx-text">—</p>
+    </div>
+    <div class="card">
+      <h2>Repo</h2>
+      <p class="mono" id="stat-repo">—</p>
+    </div>
+  </section>
+
+  <!-- Live -->
+  <section class="panel" id="panel-live">
+    <div class="card">
+      <h2>Live event stream <span class="pill" id="sse-pill">disconnected</span></h2>
+      <pre class="log" id="live-log">Waiting for events…</pre>
+    </div>
+  </section>
+
+  <!-- Inbox -->
+  <section class="panel" id="panel-inbox">
+    <div class="card">
+      <h2>Agent inbox</h2>
+      <div id="inbox-root" class="inbox"><p class="muted">Loading…</p></div>
+    </div>
+  </section>
+
+  <!-- Setup -->
+  <section class="panel" id="panel-setup">
+    <div class="card">
+      <h2>Interface flags</h2>
+      <p class="muted">Toggle the per-surface UiFlags. Saving writes the
+        overrides to <span class="mono">.ithacus/config.json</span> — the same
+        file the runtime reads at startup.</p>
+      <div id="flags-root" class="flags"></div>
+      <p id="save-status" class="save-status"></p>
+    </div>
+  </section>
+
+  <!-- Guardrails -->
+  <section class="panel" id="panel-guardrails">
+    <div class="card">
+      <h2>Guardrails</h2>
+      <p class="muted">Security posture of this dashboard (loopback-only):</p>
+      <ul class="guard-list">
+        <li><b>Loopback only</b> — the server refuses any non-loopback bind (127.0.0.1 / localhost / ::1).</li>
+        <li><b>Zero outbound calls</b> — the dashboard only listens locally and streams the in-process event bus; it never opens an outbound connection.</li>
+        <li><b>Same-origin</b> — the page talks only to the loopback origin it was loaded from, via relative /api/* paths. No wildcard CORS.</li>
+        <li><b>Session token</b> — state-changing writes are authorized with a per-session token injected at serve time.</li>
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot muted">local dashboard · relative /api/* only · no external service</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
