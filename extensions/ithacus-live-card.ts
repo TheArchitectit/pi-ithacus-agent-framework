@@ -250,6 +250,9 @@ const STATUS_ROW: Readonly<Record<WorkerStatus, { icon: string; label: string; c
   tool_permission: { icon: "🔑", label: "awaiting permission", color: "warning" },
   ready_for_prompt: { icon: "›", label: "ready", color: "muted" },
   working: { icon: "▸", label: "working", color: "accent" },
+  // Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §6.5): retrying is an
+  // ACTIVE phase — ↻ with the attempt counter (attempt/maxRetries) appended.
+  retrying: { icon: "↻", label: "retrying", color: "warning" },
   done: { icon: "✓", label: "done", color: "success" },
   failed: { icon: "✗", label: "failed", color: "error" },
 };
@@ -421,6 +424,11 @@ export class IthLiveCard {
       // informative ("unknown" adds nothing) + the truncated error string.
       const st = STATUS_ROW[snap.status] ?? STATUS_ROW.spawning;
       let statusText = `${st.icon} ${st.label}`;
+      // Sprint 5.17 (§6.5): on a retrying snapshot append the attempt counter
+      // `(attempt n/N)` when both counters are known.
+      if (snap.status === "retrying" && snap.attempt && snap.retryMax) {
+        statusText += ` (attempt ${snap.attempt}/${snap.retryMax})`;
+      }
       if (snap.status === "failed") {
         if (snap.failureKind && snap.failureKind !== "unknown") statusText += ` · ${snap.failureKind}`;
         if (snap.error) statusText += ` (${truncateToWidth(snap.error, 18)})`;

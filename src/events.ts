@@ -32,19 +32,25 @@ export type WorkerStatus =
   | "tool_permission"      // child paused waiting for a tool-permission grant
   | "ready_for_prompt"     // child up, prompt queued, not yet running
   | "working"              // actively processing (tokens flowing)
+  | "retrying"             // Sprint 5.17: a failed attempt is being retried (fresh child / fallback hop)
   | "done"                 // finished successfully
   | "failed";              // finished with error
 
 /**
  * How a worker failed (carried by agent_done on failure). Sprint 5.14 refines
- * the classification; 5.13 only ever emits "unknown".
+ * the classification; 5.13 only ever emits "unknown". Sprint 5.17
+ * (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §2.1) adds the three transient
+ * kinds — rate_limit / network / auth — that feed the retry + fallback loop.
  */
 export type WorkerFailureKind =
-  | "context_window"       // ran out of context (→ retry via Sprint 5.17)
-  | "permission_denied"    // trust/tool permission never granted
-  | "timeout"              // exceeded maxRuntimeMs
-  | "crash"                // child process died
-  | "unknown";
+  | "context_window"       // ran out of context (→ compact + bigger-window model)
+  | "permission_denied"    // trust/tool permission never granted → STOP (interactive)
+  | "timeout"              // exceeded maxRuntimeMs → backoff retry
+  | "crash"                // child process died on boot → backoff retry (per policy.on)
+  | "rate_limit"           // 429 / quota → backoff, else alt-provider hop
+  | "network"              // ECONNRESET/ETIMEDOUT/... → backoff transient retry
+  | "auth"                 // 401/403/invalid key → skip to next hop
+  | "unknown";             // honestly unknown → STOP (never guess)
 
 /**
  * The single typed stream every ithacus view subscribes to

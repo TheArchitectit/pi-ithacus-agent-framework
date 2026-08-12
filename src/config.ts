@@ -14,6 +14,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process"; // guardrails-allow PREVENT-ITH-004 PREVENT-PI-004: read-only `git rev-parse` to scope per-repo
 import { normalizePermissionMode, type PermissionMode } from "./permissions.js";
+import type {
+  BackoffPolicy,
+  ModelFallbackHop,
+  RetryPolicy,
+  WorkerFailureKind,
+} from "./types.js";
 
 /** Project name == folder name. The resident folder is `.pi/ithacus`. */
 export const PROJECT_NAME = "ithacus";
@@ -52,6 +58,17 @@ export interface IthacusConfig {
   memoryRecall: boolean;
   /** Fallback model list appended (deduped) after the caller's resolved model. */
   fallbackModels: string[];
+  /** Sprint 5.17: richer GLOBAL model-fallback chain (optional). When present
+   *  it REPLACES the flat `fallbackModels` semantics for the global hops.
+   *  Env ITHACUS_FALLBACK_MODELS still works — treated as flat global hops. */
+  modelFallbackChain?: ModelFallbackHop[];
+  /** Sprint 5.17: distinct-model cap (per-agent overrides). default 2, clamp [1,3]. */
+  maxFallbackHops: number;
+  /** Sprint 5.17: global default retry policy (per-agent frontmatter overrides). */
+  retryPolicy?: RetryPolicy;
+  /** Sprint 5.17: global default backoff (per-agent overrides). */
+  backoffPolicy?: BackoffPolicy;
+  /** Sprint 5.17: pressure tier % reused by the auto-compact viability guard. */
   /** Sprint 5.15 (DESIGN_PERMISSION_MODES.md §2.3): fail-safe default mode for
    *  agents with no `permission:` declaration and no legacy `tools:`
    *  (env ITHACUS_PERMISSION_MODE_DEFAULT; unknown values normalize to
@@ -257,6 +274,37 @@ export function loadConfig(projectRemote?: unknown, projectUi?: unknown): Ithacu
   const fallbackModels = rawFb
     ? rawFb.split(",").map((s) => s.trim()).filter(Boolean)
     : ["claude-haiku-4-5-20251001", "kimi", "qwen"];
+
+  // Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §3.2): additive,
+  // backward-compatible config. ITHACUS_FALLBACK_MODELS keeps working (now
+  // as flat global hops); the new env vars are all optional with defaults that
+  // preserve today's behavior.
+  const modelFallbackChain: ModelFallbackHop[] | undefined = rawFb
+    ? fallbackModels.map((m) => {
+        const idx = m.indexOf("/");
+        return idx > 0
+          ? { model: m.slice(idx + 1), provider: m.slice(0, idx) }
+          : { model: m };
+      })
+    : undefined;
+
+  const rawRetryOn = process.env.ITHACUS_RETRY_ON;
+  const retryOn: WorkerFailureKind[] = rawRetryOn
+    ? (rawRetryOn.split(",").map((s) => s.trim()).filter(Boolean) as WorkerFailureKind[])
+    : ["context_window", "rate_limit", "network"];
+  const retryPolicy: RetryPolicy = {
+    enabled: envBool("ITHACUS_RETRY_ENABLED", true),
+    maxRetries: envNum("ITHACUS_RETRY_MAX", 1),
+    on: retryOn,
+    backoff: {
+      baseMs: envNum("ITHACUS_BACKOFF_BASE_MS", 500),
+      factor: envNum("ITHACUS_BACKOFF_FACTOR", 2),
+      maxMs: envNum("ITHACUS_BACKOFF_MAX_MS", 30000),
+      jitter: envBool("ITHACUS_BACKOFF_JITTER", true),
+    },
+  };
+  const backoffPolicy: BackoffPolicy = retryPolicy.backoff!;
+
   return {
     auto: envBool("ITHACUS_AUTO", true),
     anchorRecent: envNum("ITHACUS_ANCHOR_RECENT", 3),
@@ -266,11 +314,20 @@ export function loadConfig(projectRemote?: unknown, projectUi?: unknown): Ithacu
     debug: envBool("ITHACUS_DEBUG", false),
     memoryRecall: envBool("ITHACUS_MEMORY_RECALL", true),
     fallbackModels,
+    modelFallbackChain,
+    maxFallbackHops: clampNum(envNum("ITHACUS_MAX_FALLBACK_HOPS", 2), 1, 3),
+    retryPolicy,
+    backoffPolicy,
     permissionModeDefault: normalizePermissionMode(process.env.ITHACUS_PERMISSION_MODE_DEFAULT),
     permissionStrict: envBool("ITHACUS_PERMISSION_STRICT", false),
     remote: resolveRemoteCapabilities(projectRemote),
     ui: resolveUiFlags(projectUi),
   };
+}
+
+function clampNum(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n)) return lo;
+  return Math.max(lo, Math.min(hi, Math.trunc(n)));
 }
 
 /** Resolve the current repo's git root. undefined outside git. */

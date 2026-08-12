@@ -13,8 +13,130 @@
 
 import { MODE_PRESETS, type ModePreset } from "./config.js";
 export type { ModePreset };
-import type { AgentRole, IthAgent, IthRun, IthTask, PermissionMode, WorkflowNode } from "./types.js";
+import type {
+  AgentRole,
+  IthAgent,
+  IthRun,
+  IthTask,
+  PermissionMode,
+  WorkflowNode,
+  BackoffPolicy,
+  ModelFallbackChain,
+  ModelFallbackHop,
+  RetryPolicy,
+} from "./types.js";
 import { generateWaves, validateDag } from "./workflow.js";
+
+// ---------------------------------------------------------------------------
+// Dispatch-resilience defaults + resolvers (Sprint 5.17,
+// PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §3.4) — pure, pi-agnostic.
+// ---------------------------------------------------------------------------
+
+/** Global default retry policy (per-agent frontmatter overrides). */
+export const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  enabled: true,
+  maxRetries: 1,
+  on: ["context_window", "rate_limit", "network"],
+};
+
+/** Global default backoff schedule (per-agent overrides). */
+export const DEFAULT_BACKOFF: BackoffPolicy = {
+  baseMs: 500,
+  factor: 2,
+  maxMs: 30000,
+  jitter: true,
+};
+
+const MAX_HOPS_CAP = 3;
+const MAX_RETRIES_CAP = 3;
+
+function clampInt(n: number | undefined, fallback: number, cap: number): number {
+  if (n === undefined || n === null || !Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.min(cap, Math.trunc(n)));
+}
+
+/** Per-agent frontmatter retry override (clamped). Missing ⇒ base/default. */
+export function resolveRetryPolicy(
+  fm?: RetryPolicy | null,
+  base: RetryPolicy = DEFAULT_RETRY_POLICY,
+): RetryPolicy {
+  if (!fm) return { ...base, backoff: base.backoff ? { ...base.backoff } : undefined };
+  return {
+    enabled: typeof fm.enabled === "boolean" ? fm.enabled : base.enabled,
+    maxRetries: clampInt(fm.maxRetries, base.maxRetries, MAX_RETRIES_CAP),
+    on: Array.isArray(fm.on) && fm.on.length > 0 ? [...fm.on] : [...base.on],
+    backoff: fm.backoff ? { ...fm.backoff } : base.backoff ? { ...base.backoff } : undefined,
+  };
+}
+
+/** Per-agent frontmatter backoff override (clamped). Missing ⇒ base/default. */
+export function resolveBackoffPolicy(
+  fm?: BackoffPolicy | null,
+  base: BackoffPolicy = DEFAULT_BACKOFF,
+): BackoffPolicy {
+  if (!fm) return { ...base };
+  return {
+    baseMs: Number.isFinite(fm.baseMs) && fm.baseMs > 0 ? fm.baseMs : base.baseMs,
+    factor: Number.isFinite(fm.factor) && fm.factor > 0 ? fm.factor : base.factor,
+    maxMs: Number.isFinite(fm.maxMs) && fm.maxMs >= 0 ? fm.maxMs : base.maxMs,
+    jitter: typeof fm.jitter === "boolean" ? fm.jitter : base.jitter,
+  };
+}
+
+/**
+ * Build the ordered fallback chain (#54 entry point):
+ *   [ resolved primary ] ++ per-agent fallback_models ++ config fallback
+ * deduped by model+provider, then clamped to [1, maxHops ∪ 3]. Reuses
+ * buildModelChain's ordering; adds provider-prefix awareness and the cap.
+ *
+ * The primary is the caller's already-resolved model. Pass `resolved` (the
+ * PR #3250 provider context) when you want resolveAgentModel to run inside;
+ * otherwise pass `primaryModel`/`primaryProvider` directly (dispatch context,
+ * where `params.model` is already explicit).
+ */
+export function resolveModelFallbackChain(opts: {
+  explicit?: string | null;
+  resolved?: ResolvedModel;
+  primaryModel?: string;
+  primaryProvider?: string;
+  perAgentFallback?: string[];
+  configFallback?: ModelFallbackHop[];
+  maxHops?: number;
+}): ModelFallbackChain {
+  const primary =
+    opts.primaryModel ??
+    (opts.resolved ? resolveAgentModel(opts.explicit, opts.resolved) : opts.explicit ?? DEFAULT_AGENT_MODEL);
+  const primaryProvider = opts.primaryProvider ?? opts.resolved?.provider ?? undefined;
+
+  const hops: ModelFallbackHop[] = [
+    { model: primary, ...(primaryProvider ? { provider: primaryProvider } : {}) },
+    ...(opts.perAgentFallback ?? []).map((m) => {
+      const [provider, model] = splitPrefix(m);
+      return provider ? { model, provider } : { model: m };
+    }),
+    ...(opts.configFallback ?? []).map((h) => ({ ...h })),
+  ];
+
+  // Dedupe by model+provider (first occurrence wins).
+  const seen = new Set<string>();
+  const deduped: ModelFallbackHop[] = [];
+  for (const h of hops) {
+    const key = `${h.provider ?? h.model.split("/")[0]}::${h.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(h);
+  }
+
+  const maxHops = clampInt(opts.maxHops, 2, MAX_HOPS_CAP);
+  return { hops: deduped.slice(0, maxHops), maxHops };
+}
+
+function splitPrefix(model: string): [string | undefined, string] {
+  const idx = model.indexOf("/");
+  if (idx > 0) return [model.slice(0, idx), model.slice(idx + 1)];
+  return [undefined, model];
+}
+
 
 export interface ResolvedModel {
   id: string;

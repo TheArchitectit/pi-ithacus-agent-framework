@@ -65,7 +65,16 @@ import {
   getLiveCardHidden,
 } from "./ithacus-live-card.js";
 import { mapEventToStatus } from "../src/worker-status.js";
+import {
+  resolveRetryPolicy,
+  resolveModelFallbackChain,
+} from "../src/team.js";
+import type { LiveProgress } from "../src/auto-compact.js";
+import { dispatchWithResilience } from "./ithacus-retry.js";
+import type { ResilienceResult, RetryHopRecord } from "./ithacus-retry.js";
 import type { IthRuntime } from "./ithacus-runtime.js";
+import { loadConfig } from "../src/config.js";
+import type { IthacusConfig } from "../src/config.js";
 import { maybeShowFirstDispatchNotice } from "./ithacus-onboarding.js";
 import { registerToolWithVisibility } from "./ithacus-tool-registry.js";
 import { ToolVisibility } from "../src/tool-visibility.js";
@@ -81,6 +90,23 @@ import { discoverIthacusAgents, findAgent } from "./ithacus-agents.js";
 // stable now that the implementation lives in ithacus-spawn.ts.
 export { spawnAgent };
 export type { SpawnAgentOpts, SpawnAgentResult } from "./ithacus-spawn.js";
+
+// Sprint 5.17 (§6.1): adapter from the extensions AgentLive store to the src/
+// LiveProgress shape the durability compact-rebuild uses. Pi-agnostic (pure
+// field mapping); keeps src/ auto-compact free of extension imports.
+function liveToProgress(live: { agent: string; model?: string; recentTools: Array<{ tool: string; args: string }>; toolCallCount: number; tokensIn: number; tokensOut: number; filesAccessed: string[]; taskPreview?: string } | undefined): LiveProgress | undefined {
+  if (!live) return undefined;
+  return {
+    agent: live.agent,
+    model: live.model,
+    recentTools: live.recentTools ?? [],
+    toolCallCount: live.toolCallCount ?? 0,
+    tokensIn: live.tokensIn ?? 0,
+    tokensOut: live.tokensOut ?? 0,
+    filesAccessed: live.filesAccessed ?? [],
+    taskPreview: live.taskPreview,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // registerDispatchTool — the LLM-invoked `ithacus-dispatch` tool
@@ -118,6 +144,8 @@ function writeDispatchCompletion(runtime: IthRuntime | undefined, info: {
   task: string;
   paramsModel?: string;
   paramsProvider?: string;
+  /** Sprint 5.17: per-attempt resilience record from dispatchWithResilience. */
+  retryMeta?: RetryHopRecord[];
 }): void {
   try {
     if (!runtime) return;
@@ -143,6 +171,19 @@ function writeDispatchCompletion(runtime: IthRuntime | undefined, info: {
           task: info.task.slice(0, 200),
           outputTail: res?.output ? res.output.slice(-2000) : undefined,
           stderrTail: res?.stderr ? res.stderr.slice(-500) : undefined,
+          // Sprint 5.17: resilience audit trail for Fleet/audit surfaces.
+          ...(info.retryMeta && info.retryMeta.length > 0
+            ? { retries: info.retryMeta.map((a) => ({
+                attempt: a.index,
+                kind: a.kind,
+                action: a.action,
+                fromModel: a.fromModel,
+                toModel: a.toModel,
+                reason: a.reason,
+                compacted: a.compacted,
+                success: a.success,
+              })) }
+            : {}),
         },
         null,
         2,
@@ -236,6 +277,18 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
       // spawnAgent falls back to its own `opts.tools ?? agent.tools`
       // (permission resolution NEVER breaks dispatch).
       let effectiveTools: string[] | undefined;
+      // Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §6.2): per-agent
+      // retry + model-fallback resolution. Global defaults first, then the
+      // agent's frontmatter override (agentCfg.retry / agentCfg.fallback);
+      // consumed by the dispatch-with-resilience loop below. Best-effort —
+      // on any error we keep the global defaults, never break dispatch.
+      let retryPolicy = resolveRetryPolicy(runtime?.config.retryPolicy);
+      let fallbackChain = resolveModelFallbackChain({
+        primaryModel: params.model,
+        primaryProvider: params.provider,
+        configFallback: runtime?.config.modelFallbackChain,
+        maxHops: runtime?.config.maxFallbackHops,
+      });
       try {
         const agentCfg = findAgent(discoverIthacusAgents(), agentType);
         if (agentCfg) {
@@ -259,12 +312,25 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             sourceTrust: trust,
             resolvedTools: effectiveTools,
           }));
+          // Sprint 5.17: fold the agent's per-agent fallback + retry overrides
+          // into the resolved policy/chain (frontmatter wins over globals).
+          retryPolicy = resolveRetryPolicy(agentCfg.retry, retryPolicy);
+          fallbackChain = resolveModelFallbackChain({
+            primaryModel: params.model,
+            primaryProvider: params.provider,
+            perAgentFallback: agentCfg.fallback?.models,
+            configFallback: runtime?.config.modelFallbackChain,
+            maxHops: agentCfg.fallback?.maxHops ?? runtime?.config.maxFallbackHops,
+          });
         }
       } catch { /* permission resolution is best-effort — dispatch still proceeds */ }
       const dispatchId = `${toolCallId}-${Date.now()}`;
       const startTime = Date.now(); // execute()'s clock (updateLive durations)
       runtime?.dispatchStarted(agentType);
       let res;
+      // Sprint 5.17 (§6.1): resilience result (attempts/total) survives into
+      // the finally for the completion-file audit trail.
+      let resilience;
       // Mutable holder for the card ref: the ctx.ui.custom factory closure
       // assigns it — TS flow analysis can't see closure writes, and reading
       // a plain `let cardRef: IthLiveCard | null` in the finally below would
@@ -282,7 +348,9 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
 
         // Sprint 5.13 §3.3 (1): register the run in the live store BEFORE
         // spawnAgent — the overlay renders real data from its first frame.
-        startLive(dispatchId, agentType, params.model, taskPreview);
+        // Sprint 5.17 (§6.2): pass the retry budget (0-based attempt + max) so
+        // the card can paint "↻ retrying (attempt n/N)" on a later markRetry.
+        startLive(dispatchId, agentType, params.model, taskPreview, 0, retryPolicy.maxRetries);
 
         // Sprint 5.13 §3.3 (2): show the live overlay IMMEDIATELY (before
         // spawnAgent) — a bordered box, ithacus's own look, at the dynamic
@@ -337,7 +405,15 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
         // passes through (spawnAgent's rawJsonLine hook) into the live store
         // — parseJsonlLine tolerates non-JSON/partial lines (returns null),
         // updateLive drives the overlay via the onLiveChanged listener.
-        res = await spawnAgent({
+        // Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §6.1): route the
+        // spawn through dispatchWithResilience so transient failures retry
+        // (bounded backoff), context-window collapses auto-compact from
+        // durable state, and the model chain falls forward (#54). A fresh
+        // child is ALWAYS spawned per attempt — never reused session (we avoid
+        // re-hydrating the dead child per the claw-code PR #4 lesson) — and
+        // the compacted prompt is rebuilt from live store + originalTask.
+        resilience = await dispatchWithResilience({
+          dispatchId,
           agent: agentType,
           task: params.task,
           model: params.model,
@@ -345,6 +421,12 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
           cwd: params.cwd,
           tools: effectiveTools, // Sprint 5.15: physically enforced permission
           signal: signal ?? undefined,
+          // Sprint 5.17: resolved policy/chain + the live→src adapter the
+          // durability loop uses to rebuild the compacted continuation.
+          config: runtime?.config ?? loadConfig(),
+          policy: retryPolicy,
+          chain: fallbackChain,
+          toLiveProgress: (id) => liveToProgress(getLive(id)),
           onProgress: (info) => {
             if (info.rawJsonLine) {
               const event = parseJsonlLine(info.rawJsonLine);
@@ -389,6 +471,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
             });
           },
         });
+        res = resilience.result;
       } finally {
         // Sprint 5.13 §3.3 (4): flip the store to its terminal state — the
         // card paints ✓/✗, holds 3s, then auto-dismisses (its dismiss path
@@ -413,6 +496,7 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
           task: params.task,
           paramsModel: params.model,
           paramsProvider: params.provider,
+          retryMeta: resilience?.attempts,
         });
       }
       // Final result: a visible status header (agent/model/duration/status)

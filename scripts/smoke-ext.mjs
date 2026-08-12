@@ -62,13 +62,30 @@ mkdirSync(agentsDir, { recursive: true });
 const prevHome = process.env.HOME;
 
 try {
+  // Rewrite .js ESM specifiers to .ts so Node resolves them under
+  // --experimental-strip-types. Order matters: ../src/X.js → ./X.ts must run
+  // FIRST so it maps to the flat tmpDir src copies (below) instead of the real
+  // repo-root src/ (whose un-rewritten ./X.js VALUE specifiers crash with
+  // ERR_MODULE_NOT_FOUND).
+  const rewriteJsToTs = (code) =>
+    code
+      .replace(/(from\s+["'])\.\.\/src\/([^"']+?)\.js(["'])/g, "$1./$2.ts$3")
+      .replace(/(from\s+["']\.\.?\/[^"']+)\.js(["'])/g, "$1.ts$2")
+      .replace(/(import\(\s*["']\.\.?\/[^"']+)\.js(["']\s*\))/g, "$1.ts$2");
+
+  // Extensions mirrored into tmpDir (../src/X.js → ./X.ts + ./Y.js → ./Y.ts).
   for (const f of readdirSync(join(repoRoot, "extensions"))) {
     if (!f.endsWith(".ts")) continue;
-    let code = readFileSync(join(repoRoot, "extensions", f), "utf-8");
-    // Rewrite relative "./x.js" specifiers to ".ts" so Node resolves them.
-    code = code.replace(/(from\s+["']\.\.?\/[^"']+)\.js(["'])/g, "$1.ts$2");
-    code = code.replace(/(import\(\s*["']\.\.?\/[^"']+)\.js(["']\s*\))/g, "$1.ts$2");
-    writeFileSync(join(tmpDir, f), code);
+    writeFileSync(join(tmpDir, f), rewriteJsToTs(readFileSync(join(repoRoot, "extensions", f), "utf-8")));
+  }
+  // ALL src/*.ts mirrored FLAT into tmpDir with the same rewrite, so the VALUE
+  // imports src files carry (./failure-kind.js, ./checkpoint.js, ./config.js,
+  // ./team.js, ./workflow.js, ./window-pressure.js, ./boundary.js, …) resolve
+  // to flat rewritten siblings — never the missing real src/*.js files. Test
+  // files are excluded (never part of the extension runtime chain).
+  for (const f of readdirSync(join(repoRoot, "src"))) {
+    if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+    writeFileSync(join(tmpDir, f), rewriteJsToTs(readFileSync(join(repoRoot, "src", f), "utf-8")));
   }
   for (const f of readdirSync(join(repoRoot, "extensions", "agents"))) {
     if (!f.endsWith(".md")) continue;
@@ -755,7 +772,7 @@ try {
     // subprocess — src/worker-status.ts's line mapping + live.setWorkerStatus
     // stand in for dispatch's onProgress call, which IS these two lines).
     {
-      const wsMod = await import(join(repoRoot, "src", "worker-status.ts"));
+      const wsMod = await import(join(tmpDir, "worker-status.ts"));
       const richerId = "smoke-live-4";
       liveMod.startLive(richerId, "explore", "claude-haiku-4-5", "probe the repo layout");
       const step = (line) => {
@@ -933,7 +950,7 @@ try {
     // rewrite so inner .js specifiers resolve — config.ts's ./permissions.js
     // is the exact case the top-level mirror otherwise cannot remap.
     for (const f of ["config.ts", "permissions.ts", "event-bus.ts", "events.ts",
-                     "types.ts", "worker-status.ts", "redact.ts", "agent-bundles.ts"]) {
+                     "types.ts", "worker-status.ts", "failure-kind.ts", "redact.ts", "agent-bundles.ts"]) {
       writeFileSync(join(webSrcDir, f),
         rewriteJsSpecifiers(readFileSync(join(repoRoot, "src", f), "utf-8")));
     }

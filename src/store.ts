@@ -27,6 +27,22 @@ function parseDependsOn(raw: string | null | undefined): string[] {
   catch { return []; }
 }
 
+/** Sprint 5.17: one row of the ith_retries audit trail (fleet view). */
+export interface RetryAttemptRecord {
+  dispatchId: string;
+  agent: string;
+  attempt: number;
+  failureKind: string;
+  action: string;
+  fromModel?: string;
+  toModel?: string;
+  reason: string;
+  compacted: boolean;
+  startedAt: number;
+  durationMs: number;
+  retryOf: number;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS ith_runs (runId TEXT PRIMARY KEY, modePreset TEXT NOT NULL, createdAt INTEGER NOT NULL, summary TEXT NOT NULL, status TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ith_agents (id TEXT PRIMARY KEY, runId TEXT NOT NULL, role TEXT NOT NULL, model TEXT NOT NULL, provider TEXT, status TEXT NOT NULL, lastSeen INTEGER NOT NULL, resultSchema TEXT, resultValidated INTEGER NOT NULL DEFAULT 0);
@@ -42,6 +58,12 @@ CREATE INDEX IF NOT EXISTS ix_ith_inbox_agent ON ith_inbox(agentId, read);
 CREATE INDEX IF NOT EXISTS ix_ith_mem_repo ON ith_memories(repoId, kind);
 CREATE INDEX IF NOT EXISTS ix_ith_worktrees_run ON ith_worktrees(runId);
 CREATE INDEX IF NOT EXISTS ix_ith_async_status ON ith_async_runs(status);
+CREATE TABLE IF NOT EXISTS ith_retries (
+  dispatchId TEXT NOT NULL, agent TEXT NOT NULL, attempt INTEGER NOT NULL,
+  failureKind TEXT NOT NULL, action TEXT NOT NULL,
+  fromModel TEXT, toModel TEXT, reason TEXT, compacted INTEGER,
+  startedAt INTEGER NOT NULL, durationMs INTEGER NOT NULL, retryOf INTEGER);
+CREATE INDEX IF NOT EXISTS ix_ith_retries_dispatch ON ith_retries(dispatchId);
 `;
 
 export class IthStore {
@@ -308,6 +330,73 @@ export class IthStore {
   }
   isOnboardingSeen(): boolean {
     return this.getKv("onboarding_seen") === "1";
+  }
+
+  // ---- Sprint 5.17 retry audit (ith_retries) -----------------------------
+
+  /** Record one retry/fallback hop for a dispatch (fleet view + audit). */
+  recordRetryAttempt(rec: {
+    dispatchId: string;
+    agent: string;
+    attempt: number;
+    failureKind: string;
+    action: string;
+    fromModel?: string;
+    toModel?: string;
+    reason: string;
+    compacted: boolean;
+    startedAt: number;
+    durationMs: number;
+    retryOf: number;
+  }): void {
+    this.db.prepare(
+      `INSERT INTO ith_retries
+         (dispatchId, agent, attempt, failureKind, action, fromModel, toModel, reason, compacted, startedAt, durationMs, retryOf)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      rec.dispatchId,
+      rec.agent,
+      rec.attempt,
+      rec.failureKind,
+      rec.action,
+      rec.fromModel ?? null,
+      rec.toModel ?? null,
+      rec.reason,
+      rec.compacted ? 1 : 0,
+      rec.startedAt,
+      rec.durationMs,
+      rec.retryOf ?? 0,
+    );
+  }
+
+  /** All retry attempts for one dispatch, in attempt order. */
+  getRetryAttempts(dispatchId: string): RetryAttemptRecord[] {
+    return (
+      this.db
+        .prepare(`SELECT * FROM ith_retries WHERE dispatchId = ? ORDER BY attempt`)
+        .all(dispatchId) as unknown as Array<Record<string, unknown>>
+    ).map((row) => ({
+      dispatchId: String(row.dispatchId),
+      agent: String(row.agent),
+      attempt: Number(row.attempt),
+      failureKind: String(row.failureKind),
+      action: String(row.action),
+      fromModel: row.fromModel == null ? undefined : String(row.fromModel),
+      toModel: row.toModel == null ? undefined : String(row.toModel),
+      reason: String(row.reason),
+      compacted: Boolean(row.compacted),
+      startedAt: Number(row.startedAt),
+      durationMs: Number(row.durationMs),
+      retryOf: Number(row.retryOf ?? 0),
+    }));
+  }
+
+  /** Number of retry attempts recorded for a dispatch (fleet view). */
+  retryCount(dispatchId: string): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM ith_retries WHERE dispatchId = ?`)
+      .get(dispatchId) as unknown as { n: number };
+    return row.n;
   }
 
   close(): void {

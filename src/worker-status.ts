@@ -42,6 +42,7 @@
 
 import type { WorkerStatus, WorkerFailureKind } from "./events.js";
 import type { AgentStatus } from "./types.js";
+import { classifyFailureKind, type FailureSignals } from "./failure-kind.js";
 
 // ---------------------------------------------------------------------------
 // Coarse mapping (spec §2.1)
@@ -51,10 +52,12 @@ import type { AgentStatus } from "./types.js";
  * Map the live WorkerStatus onto the coarse sqlite-persisted AgentStatus.
  * Spec §2.1: only working/done/failed map through; the three pre-working
  * distinguishable phases persist as "spawning" until they become "working".
+ * Sprint 5.17: "retrying" is an active phase → maps to "working".
  */
 export function toAgentStatus(status: WorkerStatus): AgentStatus {
   switch (status) {
     case "working":
+    case "retrying":
       return "working";
     case "done":
       return "done";
@@ -89,13 +92,23 @@ export function isBlockedStatus(status: WorkerStatus): boolean {
  * classification owns terminal entry (spec §2.2: exit code decides).
  */
 const TRANSITIONS: Readonly<Record<WorkerStatus, readonly WorkerStatus[]>> = {
-  spawning: ["spawning", "trust_required", "tool_permission", "ready_for_prompt", "working", "done", "failed"],
+  // Sprint 5.17: "retrying" is a legal target from spawning (retry before a
+  // child ever reaches working) and from working (the failed attempt was
+  // actively processing). "failed" stays ABSORBING (endLive fires once, in
+  // the caller — the retry loop uses setWorkerStatus before that), so failed
+  // never re-enters a retry.
+  spawning: ["spawning", "trust_required", "tool_permission", "ready_for_prompt", "working", "retrying", "done", "failed"],
   // Trust precedes permission/ready/work; no rewind to "spawning".
   trust_required: ["trust_required", "tool_permission", "ready_for_prompt", "working", "done", "failed"],
   tool_permission: ["tool_permission", "ready_for_prompt", "working", "done", "failed"],
   ready_for_prompt: ["ready_for_prompt", "tool_permission", "working", "done", "failed"],
   // A mid-run grant gate is real: working → tool_permission → working.
-  working: ["working", "tool_permission", "done", "failed"],
+  working: ["working", "tool_permission", "retrying", "done", "failed"],
+  // Sprint 5.17: "retrying" is an ACTIVE phase between a failed attempt and a
+  // fresh respawn — leaving it (working on the new child, or the final
+  // terminal flip) is forward progress; done/failed still only enter from exit
+  // classification, never from a line.
+  retrying: ["retrying", "working", "done", "failed"],
   done: ["done"],
   failed: ["failed"],
 };
@@ -204,43 +217,25 @@ export function mapEventToStatus(line: string, current: WorkerStatus): WorkerSta
 // Failure classification (spec §2.2: "non-zero → failed + WorkerFailureKind")
 // ---------------------------------------------------------------------------
 
-/** Exit-time evidence the adapter (endLive) hands the classifier. */
-export interface WorkerFailureSignals {
-  /** Child exit code, when a process ran and reported one. */
-  exitCode?: number;
-  /** Explicit timeout trip (maxRuntimeMs — seam for the future scheduler). */
-  timedOut?: boolean;
-  /** The WORKER's status just before the terminal flip (never "done"/"failed"). */
-  lastStatus?: WorkerStatus;
-  /** Tail slices of captured stderr / assistant output (marker scan window). */
-  stderrTail?: string;
-  outputTail?: string;
-}
-
-const CONTEXT_WINDOW_MARKERS: readonly RegExp[] = [
-  /context (window|length)/i,
-  /maximum context/i,
-  /context_left/i,
-  /prompt is too long/i,
-  /too many tokens/i,
-];
+/** Exit-time evidence the adapter (endLive) hands the classifier.
+ *  Sprint 5.17: this aliases the shared FailureSignals shape from
+ *  failure-kind.ts (single owner of marker sets + precedence) — kept here as a
+ *  backward-compatible re-export so existing call sites (`endLive`,
+ *  ithacus-dispatch) compile unchanged. */
+export type WorkerFailureSignals = FailureSignals;
 
 /**
  * Order is semantic precedence: an explicit timeout trip is authoritative;
- * a worker that exits still BLOCKED on a grant never got permission; a
- * context-window marker beats the generic kinds (it drives the Sprint 5.17
- * retry seam); exiting non-zero before any assistant output (never reached
+ * a worker that exits still BLOCKED on a grant never got permission; the
+ * transient markers (auth / timeout / rate_limit / network / context_window)
+ * scan the tail; exiting non-zero before any assistant output (never reached
  * "working", nothing captured) means the process crashed on the way up;
  * anything else is honestly "unknown".
+ *
+ * Sprint 5.17: DELEGATES to failure-kind.ts classifyFailureKind() — the
+ * single owner of ALL marker sets (removes the local CONTEXT_WINDOW_MARKERS
+ * duplicate and adds the new auth/rate_limit/network/timeout kinds).
  */
 export function classifyFailure(signals: WorkerFailureSignals): WorkerFailureKind {
-  if (signals.timedOut) return "timeout";
-  const last = signals.lastStatus ?? "spawning";
-  if (isBlockedStatus(last)) return "permission_denied";
-  const tail = `${signals.stderrTail ?? ""}\n${signals.outputTail ?? ""}`;
-  if (CONTEXT_WINDOW_MARKERS.some((re) => re.test(tail))) return "context_window";
-  if (typeof signals.exitCode === "number" && signals.exitCode !== 0 && last !== "working" && !tail.trim()) {
-    return "crash";
-  }
-  return "unknown";
+  return classifyFailureKind(signals);
 }

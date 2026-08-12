@@ -290,6 +290,8 @@ export type { ActivityEvent, AgentDefinition, TeamDefinition, MetricPoint, Plugi
 // types.ts is the stable import site; the declarations themselves live in the
 // pure, zero-import resolvers (permissions.ts) so every src/ consumer (team,
 // config, types-sprint-3.2) takes them from here.
+import type { WorkerFailureKind } from './events.js';
+export type { WorkerFailureKind };
 import type { PermissionMode } from './permissions.js'; // type-only — erased at strip
 export type { PermissionMode, AgentPermissions, PermissionOverride, ResolvedPermission } from './permissions.js';
 
@@ -303,6 +305,54 @@ export interface PermissionAudit {
   /** ExtensionTrustLevel label from src/extension-trust.ts. */
   sourceTrust: string;
   ts: number;
+}
+
+// ---- Dispatch Resilience (Sprint 5.17 — PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md) ----
+// Model-fallback chain + retry/backoff policy types. src/ stays pi-agnostic;
+// the resolution + routing logic lives in team.ts / model-fallback.ts, the
+// pure backoff math in retry.ts, and the extension orchestration in
+// extensions/ithacus-retry.ts.
+
+/** Routing hint tag on a fallback hop so failure-aware selection can pick the
+ *  right model for a given failure class (e.g. "big-window" for
+ *  context_window, "alt-provider" for rate_limit). TAGS ARE HINTS ONLY — the
+ *  chain ORDER is the authoritative user intent (§3.4 G6: no model→window
+ *  registry; order + tag encode it). */
+export type FallbackTag = "big-window" | "alt-provider" | "cheaper" | "faster";
+
+/** One step in the ordered model-fallback chain. Index 0 is always the
+ *  resolved primary model; later hops are alternates tried on failure. */
+export interface ModelFallbackHop {
+  /** May be provider-prefixed: "plexus/claude-…" (resolved via the
+   *  provider-resolver at the spawn boundary). */
+  model: string;
+  /** Optional explicit provider pin (overrides model-prefix resolution). */
+  provider?: string;
+  /** Routing hints so failure-aware selection can pick the right hop. */
+  tags?: FallbackTag[];
+}
+
+/** The full ordered fallback chain for one dispatch. */
+export interface ModelFallbackChain {
+  hops: ModelFallbackHop[]; // ordered; index 0 = resolved primary model
+  maxHops: number;          // distinct models tried; default 2, hard cap 3
+}
+
+/** Bounded exponential backoff schedule for transient failures. Pure — the
+ *  actual sleep lives in the extension layer (src stays unit-testable). */
+export interface BackoffPolicy {
+  baseMs: number;   // default 500
+  factor: number;   // default 2 (exponential)
+  maxMs: number;    // default 30000 (cap)
+  jitter: boolean;  // default true (±50%)
+}
+
+/** Which WorkerFailureKind values trigger a retry/fallback hop, and how many. */
+export interface RetryPolicy {
+  enabled: boolean;
+  maxRetries: number;          // total attempts = 1 + maxRetries; default 1, hard cap 3
+  on: WorkerFailureKind[];     // which kinds trigger a retry/fallback hop
+  backoff?: BackoffPolicy;     // transient backoff schedule
 }
 
 // ---- LSP Integration (Sprint 4.1) — split out ----

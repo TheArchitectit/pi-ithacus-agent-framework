@@ -65,6 +65,12 @@ export interface AgentLive {
    *  unless the exit evidence says otherwise (context_window /
    *  permission_denied / timeout / crash). Undefined on success. */
   failureKind?: WorkerFailureKind;
+  /** Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §6.4): current retry
+   *  attempt (1-based) and the retry budget (policy.maxRetries), for the
+   *  card's "↻ retrying (attempt n/N)" row + fleet view. Undefined until a
+   *  retry is marked; retryMax may stay undefined when unbudgeted. */
+  attempt?: number;
+  retryMax?: number;
 }
 
 /**
@@ -194,7 +200,7 @@ function toolNameOf(event: PiJsonEvent, fallback: string): string {
  * agent_status:"spawning" to the bus; the snapshot status IS "spawning"
  * from birth (5.14: the richly-typed vocabulary replaces the 5.13 "running").
  */
-export function startLive(id: string, agent: string, model?: string, taskPreview?: string): void {
+export function startLive(id: string, agent: string, model?: string, taskPreview?: string, attempt?: number, retryMax?: number): void {
   live.set(id, {
     agent,
     model,
@@ -207,11 +213,25 @@ export function startLive(id: string, agent: string, model?: string, taskPreview
     filesAccessed: [],
     startedAt: Date.now(),
     taskPreview,
+    attempt,
+    retryMax,
   });
   const ts = Date.now();
   publish({ type: "run_started", runId: id, ts });
   publish({ type: "agent_status", runId: id, agentId: agent, status: "spawning", ts });
   notify();
+}
+
+/** Sprint 5.17 (§6.4): mark the dispatch as entering a retry attempt. Sets the
+ *  "retrying" WorkerStatus (progress-valid from spawning/working) + the
+ *  attempt / retryMax counters, notifies + publishes. Called between attempts
+ *  by the dispatch-with-resilience loop. Best-effort: no entry → no-op. */
+export function markRetry(id: string, attempt: number, retryMax?: number): void {
+  const entry = live.get(id);
+  if (!entry) return;
+  entry.attempt = attempt;
+  if (retryMax !== undefined) entry.retryMax = retryMax;
+  if (advanceStatus(id, entry, "retrying")) notify();
 }
 
 /**

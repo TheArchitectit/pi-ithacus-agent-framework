@@ -35,8 +35,17 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readManifest, sha256 } from "../src/agent-bundles.js";
 import { parsePermissionFrontmatter, type AgentPermissions } from "../src/permissions.js";
+import type { RetryPolicy } from "../src/types.js";
 
 export type AgentSource = "bundled" | "project";
+
+/** Sprint 5.17 (§6.6): per-agent fallback chain override (frontmatter). */
+export interface AgentFallbackConfig {
+  /** Per-agent fallback model list (ordered; appended after the resolved primary). */
+  models?: string[];
+  /** Distinct-model cap override (clamp [1,3], default 2). */
+  maxHops?: number;
+}
 
 export interface AgentConfig {
   name: string;
@@ -56,6 +65,12 @@ export interface AgentConfig {
    *  declaration — the dispatch boundary then applies the legacy `tools:`
    *  pass-through (or read_only when ITHACUS_PERMISSION_STRICT=true). */
   permissions?: AgentPermissions;
+  /** Sprint 5.17 (§6.6): per-agent fallback chain override from
+   *  `fallback_models` / `fallback_max_hops` frontmatter (optional). */
+  fallback?: AgentFallbackConfig;
+  /** Sprint 5.17 (§6.6): per-agent retry override from `retry_*` / `backoff_*`
+   *  frontmatter (optional; missing ⇒ global default). */
+  retry?: RetryPolicy;
 }
 
 /**
@@ -109,6 +124,49 @@ function parseFrontmatter(content: string): {
   return { frontmatter: fm, body: match[2].trim() };
 }
 
+/** Sprint 5.17 (§6.6): per-agent fallback override from `fallback_models` /
+ *  `fallback_max_hops` flat keys. Returns undefined when neither is set. */
+function parseAgentFallback(fm: Record<string, string>): AgentFallbackConfig | undefined {
+  const rawModels = fm.fallback_models;
+  const rawHops = fm.fallback_max_hops;
+  const models = rawModels
+    ? rawModels.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  const maxHops =
+    rawHops && rawHops.trim() !== "" && Number.isFinite(Number(rawHops))
+      ? Math.max(1, Math.min(3, Math.trunc(Number(rawHops))))
+      : undefined;
+  if (!models && maxHops === undefined) return undefined;
+  return { models, maxHops };
+}
+
+/** Sprint 5.17 (§6.6): per-agent retry override from `retry_enabled` /
+ *  `retry_max` / `retry_on` / `backoff_base_ms` flat keys. Returns undefined
+ *  when NO retry key is present (missing ⇒ global default). */
+function parseAgentRetry(fm: Record<string, string>): RetryPolicy | undefined {
+  const hasAny = ["retry_enabled", "retry_max", "retry_on", "backoff_base_ms"].some(
+    (k) => fm[k] !== undefined && fm[k] !== "",
+  );
+  if (!hasAny) return undefined;
+  const on =
+    fm.retry_on && fm.retry_on.trim() !== ""
+      ? fm.retry_on.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+  const baseMs =
+    fm.backoff_base_ms && fm.backoff_base_ms.trim() !== "" && Number.isFinite(Number(fm.backoff_base_ms))
+      ? Number(fm.backoff_base_ms)
+      : undefined;
+  return {
+    enabled: fm.retry_enabled ? fm.retry_enabled !== "false" : true,
+    maxRetries:
+      fm.retry_max && fm.retry_max.trim() !== "" && Number.isFinite(Number(fm.retry_max))
+        ? Math.max(0, Math.min(3, Math.trunc(Number(fm.retry_max))))
+        : 1,
+    on: on as RetryPolicy["on"],
+    ...(baseMs !== undefined ? { backoff: { baseMs, factor: 2, maxMs: 30000, jitter: true } } : {}),
+  };
+}
+
 function loadAgentsFromDir(dir: string, source: AgentSource, suffix?: ".local"): AgentConfig[] {
   const agents: AgentConfig[] = [];
   if (!fs.existsSync(dir)) return agents;
@@ -140,6 +198,10 @@ function loadAgentsFromDir(dir: string, source: AgentSource, suffix?: ".local"):
     // Sprint 5.15: tolerant permission-declaration parse (null when no
     // `permission:` key — the resolver's fail-safe/legacy path applies then).
     const fmPerm = parsePermissionFrontmatter(frontmatter);
+    // Sprint 5.17 (§6.6): per-agent fallback + retry overrides from flat keys
+    // (one-per-line parser — no nested YAML). Missing/empty ⇒ undefined.
+    const fallback = parseAgentFallback(frontmatter);
+    const retry = parseAgentRetry(frontmatter);
     agents.push({
       name,
       description: frontmatter.description ?? "",
@@ -150,6 +212,8 @@ function loadAgentsFromDir(dir: string, source: AgentSource, suffix?: ".local"):
       source,
       filePath,
       permissions: fmPerm ?? undefined,
+      fallback,
+      retry,
     });
   }
   return agents;

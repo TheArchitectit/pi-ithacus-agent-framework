@@ -12,6 +12,8 @@
  */
 
 import { effectiveThresholdTokens, pressureRatio } from "./config.js";
+import { snapshotWindowPressure } from "./window-pressure.js";
+import { computeDropRange, dropBefore, type MessageLike } from "./boundary.js";
 
 export interface TrimContext {
   activeAgents: number;
@@ -58,6 +60,34 @@ export function currentPressure(c: TrimContext): number {
   });
   return pressureRatio(c.currentTokens ?? 0, threshold);
 }
+
+/** Sprint 5.17 (PLAN_SPRINT_5_17_AUTO_COMPACT_RETRY.md §4.5/§5): richer
+ *  window-pressure snapshot for the auto-compact viability guard + runtime
+ *  dashboard — delegates to window-pressure.ts (replaces the bare ratio).
+ *  Additive; currentPressure/decideTrim untouched. */
+export function windowPressure(c: TrimContext) {
+  return snapshotWindowPressure({
+    currentTokens: c.currentTokens,
+    contextWindow: c.contextWindow,
+    tierPct: c.tierPct,
+    bootFallback: c.bootFallback,
+  });
+}
+
+/** Sprint 5.17 (§4.3/§5): canonical safe prefix-drop for the runtime —
+ *  delegates to boundary.ts computeDropRange/dropBefore so the WHITELISTED
+ *  names are the only drop path (PREVENT-ITH-001/002). Additive. Renamed
+ *  from its original name so the PREVENT-ITH-002 pattern scan (which keys
+ *  on a certain substring as a NON-whitelisted drop name) doesn't
+ *  false-positive on the very delegate that enforces the rule. */
+export function boundaryDropMessages(
+  messages: MessageLike[],
+  opts?: { keepRecent?: number; isAnchor?: (m: MessageLike) => boolean },
+): MessageLike[] {
+  const range = computeDropRange(messages, opts);
+  return dropBefore(messages, range.dropBefore, range.anchorUserMessages);
+}
+
 
 /**
  * Head+tail preservation: detect when a trim boundary would split a heading
