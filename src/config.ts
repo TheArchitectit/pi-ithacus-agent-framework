@@ -53,6 +53,11 @@ export interface IthacusConfig {
   tierPct: number;
   /** Deadline (ms) guarding against thrashing the durable trim. */
   trimDebounceMs: number;
+  /** Single-authority consolidation (2026-08-12): durable compaction in the
+   *  parent session is owned by pi-mega-compact, so ithacus does NOT self-trim
+   *  by default. Default OFF; set ITHACUS_SELF_COMPACT=true to restore the
+   *  legacy P7 self-trim (sessions running WITHOUT pi-mega-compact loaded). */
+  selfCompact: boolean;
   debug: boolean;
   /** Cross-repo memory recall enabled. */
   memoryRecall: boolean;
@@ -325,6 +330,7 @@ export function loadConfig(projectRemote?: unknown, projectUi?: unknown): Ithacu
     anchorRecent: envNum("ITHACUS_ANCHOR_RECENT", 3),
     preserveRecent: envNum("ITHACUS_PRESERVE_RECENT", 4),
     tierPct: envNum("ITHACUS_TIER_PCT", 0.7),
+    selfCompact: envBool("ITHACUS_SELF_COMPACT", false),
     trimDebounceMs: envNum("ITHACUS_TRIM_DEBOUNCE_MS", 2000),
     debug: envBool("ITHACUS_DEBUG", false),
     memoryRecall: envBool("ITHACUS_MEMORY_RECALL", true),

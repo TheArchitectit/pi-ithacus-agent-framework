@@ -57,6 +57,23 @@ check("decideTrim skips when agents active", noTrim.shouldTrim === false);
 check("pressureBand mega at >=1.0", cfg.pressureBand(1.1) === "mega");
 check("effectiveThreshold scales with window", cfg.effectiveThresholdTokens({ tierPct: 0.7, window: 200000, fallback: 140000 }) === 140000);
 
+// Consolidation (2026-08-12): durable compaction defaults to pi-mega-compact's
+// ownership (selfCompact OFF); ITHACUS_SELF_COMPACT=true opts back into the
+// legacy P7 self-trim. Env-safe (save/restore) so later smoke tests are stable.
+{
+	const prevSelf = process.env.ITHACUS_SELF_COMPACT;
+	try {
+		delete process.env.ITHACUS_SELF_COMPACT;
+		check("config defaults selfCompact OFF (compact owned by pi-mega-compact)", cfg.loadConfig().selfCompact === false);
+		process.env.ITHACUS_SELF_COMPACT = "true";
+		check("ITHACUS_SELF_COMPACT=true re-enables legacy self-trim", cfg.loadConfig().selfCompact === true);
+		process.env.ITHACUS_SELF_COMPACT = "1";
+		check("ITHACUS_SELF_COMPACT=1 also re-enables self-trim", cfg.loadConfig().selfCompact === true);
+	} finally {
+		if (prevSelf === undefined) delete process.env.ITHACUS_SELF_COMPACT; else process.env.ITHACUS_SELF_COMPACT = prevSelf;
+	}
+}
+
 // ---- workflow DAG engine (Sprint 1.1) ------------------------------------
 // Graph:  a -> b -> c (line), d independent
 const dag = [
