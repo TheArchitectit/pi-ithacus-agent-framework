@@ -812,8 +812,27 @@ when mesh enabled + peer allowlist. No libp2p/custom NAT/own PKI.
 
 **Dependencies**: Sprint 5.9 (A2A adapter), Sprint 5.24 (gate).
 
+---
+
+### Sprint 5.27: Live-Card Overlay UX + Web Interface Toggle Surface
+
+**Status**: 📋 SPEC READY — `docs/SPRINT_5_27_UI_OVERLAYS_AND_WEB_TOGGLES.md`
+(captured from user reports 2026-08-11)
+
+**Scope**: Fix the live card to render as a true centered overlay
+(`overlayOptions.anchor:"center"`, floats above message flow), add size
+toggles (small/medium/large via `/ithacus-live size`) and hide/resume
+(`/ithacus-live hide|show`, persisted in `ith_kv`); pull forward Sprint 5.23
+web interface (loopback `node:http` + SSE + Setup panel) as the opt-out
+surface; add `UiFlags` in `src/config.ts` — all local UI flags **default ON**
+(Tier R remote caps stay default-OFF per Sprint 5.24).
+
+**Dependencies**: Sprint 5.24 commit first (uncommitted writer changes in
+tree); Sprint 5.23 spec for web interface.
+
 **Approval required**: Yes — all three remote sprints (5.9-rework, 5.25,
-5.26) require explicit approval per their Tier R status.
+5.26) require explicit approval per their Tier R status. Sprint 5.27 itself
+is Tier L local-only.
 
 ---
 
