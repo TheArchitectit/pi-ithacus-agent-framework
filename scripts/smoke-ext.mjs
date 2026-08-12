@@ -37,6 +37,7 @@
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
+import { get as httpGet } from "node:http"; // loopback client for the §3e web-dashboard smoke
 
 // ---- check() harness (mirrors smoke-src.mjs) -------------------------------
 const checks = [];
@@ -847,6 +848,149 @@ try {
       process.chdir(tmpDir); // restore the harness cwd before removing pubDir
       try { rmSync(pubDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  }
+
+  // ---- Sprint 5.27 §3.4 — loopback-only web dashboard (ithacus-web.ts) ------
+  // Exerts the node:http loopback server IN-PROCESS (no subprocess, no TUI, no
+  // pi runtime): loopback bind policy, /api/* + SSE serving, and the
+  // registerWebCommand seam. Non-loopback binds are REFUSED outright.
+  //
+  // ithacus-web.ts imports ../src/config.js — and real repo-root src/config.ts
+  // keeps a ./permissions.js specifier that the top-level tmpDir mirror cannot
+  // remap (it only rewrites extensions/*.ts; there is no physical
+  // src/permissions.js). Mirror ithacus-web into its OWN layout with a
+  // rewritten src/, so its "../src" resolves to the rewritten copies (same
+  // self-contained pattern as the published-package-layout section above).
+  {
+    const webDir = mkdtempSync(join(repoRoot, ".smoke-web-tmp-"));
+    const webExtDir = join(webDir, "ext");
+    const webSrcDir = join(webDir, "src");
+    mkdirSync(webExtDir, { recursive: true });
+    mkdirSync(webSrcDir, { recursive: true });
+    const rewriteJsSpecifiers = (code) =>
+      code
+        .replace(/(from\s+["']\.\.?\/[^"']+)\.js(["'])/g, "$1.ts$2")
+        .replace(/(import\(\s*["']\.\.?\/[^"']+)\.js(["']\s*\))/g, "$1.ts$2");
+    // Extensions side: ithacus-web plus the two sibling modules it imports.
+    for (const f of ["ithacus-web.ts", "ithacus-agents.ts", "ithacus-live.ts"]) {
+      writeFileSync(join(webExtDir, f),
+        rewriteJsSpecifiers(readFileSync(join(repoRoot, "extensions", f), "utf-8")));
+    }
+    // Src side: the full transitive src closure ithacus-web pulls in via its
+    // sibling modules plus its own ../src/* imports. Mirror each WITH the
+    // rewrite so inner .js specifiers resolve — config.ts's ./permissions.js
+    // is the exact case the top-level mirror otherwise cannot remap.
+    for (const f of ["config.ts", "permissions.ts", "event-bus.ts", "events.ts",
+                     "types.ts", "worker-status.ts", "redact.ts", "agent-bundles.ts"]) {
+      writeFileSync(join(webSrcDir, f),
+        rewriteJsSpecifiers(readFileSync(join(repoRoot, "src", f), "utf-8")));
+    }
+    // agents/*.md for ithacus-agents discovery (bundledAgentsDir is
+    // import.meta.url-based, so they live next to the mirrored extension).
+    const webAgentsDir = join(webExtDir, "agents");
+    mkdirSync(webAgentsDir, { recursive: true });
+    for (const f of readdirSync(join(repoRoot, "extensions", "agents"))) {
+      if (!f.endsWith(".md")) continue;
+      copyFileSync(join(repoRoot, "extensions", "agents", f), join(webAgentsDir, f));
+    }
+
+    let webMod = await import(join(webExtDir, "ithacus-web.ts"));
+
+    function stubWebRuntime() {
+      return {
+        eventBus: { publish: () => {}, subscribe: () => () => {}, history: () => [] },
+        pressure: 0.42,
+        activeAgents: 2,
+        currentTurn: 3,
+        runningSummary: () => "explore×2",
+        lastCtxTokens: 1000,
+        lastCtxPercent: 0.1,
+        lastCtxWindow: 8000,
+        activeRepoRoot: "/tmp/repo",
+        currentStateDir: tmpDir,
+        store: { inbox: () => [], unreadCount: () => 0, inboxContacts: () => [] },
+      };
+    }
+
+    // Loopback bind policy — the security boundary of the local dashboard.
+    check("web.isLoopbackHost 127.0.0.1", webMod.isLoopbackHost("127.0.0.1") === true);
+    check("web.isLoopbackHost localhost", webMod.isLoopbackHost("localhost") === true);
+    check("web.isLoopbackHost ::1", webMod.isLoopbackHost("::1") === true);
+    check("web.isLoopbackHost refuses 0.0.0.0", webMod.isLoopbackHost("0.0.0.0") === false);
+    check("web.isLoopbackHost refuses LAN ip", webMod.isLoopbackHost("192.168.1.23") === false);
+    check("web.isLoopbackHost refuses wildcard", webMod.isLoopbackHost("*") === false);
+
+    // Non-loopback binds are refused outright (throws) — never silently bound.
+    let nonLoopbackRefused = false;
+    try {
+      await webMod.startWebServer(stubWebRuntime(), { host: "0.0.0.0", port: 0 });
+    } catch {
+      nonLoopbackRefused = true;
+    }
+    check("web.startWebServer refuses non-loopback bind", nonLoopbackRefused === true);
+
+    // A loopback bind actually serves the dashboard over node:http.
+    const webHandle = await webMod.startWebServer(stubWebRuntime(), { host: "127.0.0.1", port: 0 });
+    check("web.startWebServer assigns ephemeral port",
+      typeof webHandle.port === "number" && webHandle.port > 0);
+    check("web.baseUrl is loopback", webHandle.baseUrl.startsWith("http://127.0.0.1:"));
+
+    const getJson = (urlPath) => new Promise((resolve, reject) => {
+      const req = httpGet(`http://127.0.0.1:${webHandle.port}${urlPath}`, (resp) => {
+        let body = "";
+        resp.setEncoding("utf8");
+        resp.on("data", (c) => { body += c; });
+        resp.on("end", () => resolve({ status: resp.statusCode, body }));
+      });
+      req.on("error", reject);
+    });
+
+    const state = await getJson("/api/state");
+    check("web.serves /api/state 200", state.status === 200);
+    let stateObj = null;
+    try { stateObj = JSON.parse(state.body); } catch { /* ignore */ }
+    check("web.state is JSON object",
+      stateObj !== null && typeof stateObj === "object" && typeof stateObj.updatedAt === "string");
+    check("web.state exposes pressure",
+      stateObj !== null && typeof stateObj.pressure === "number");
+    check("web.state exposes roster", stateObj !== null && Array.isArray(stateObj.roster));
+
+    const conf = await getJson("/api/config");
+    let confObj = null;
+    try { confObj = JSON.parse(conf.body); } catch { /* ignore */ }
+    check("web.config 200 + ui defaults", conf.status === 200 && typeof confObj?.ui === "object");
+
+    // Live SSE: correct event-stream content-type, opened then torn down.
+    const sse = await new Promise((resolve, reject) => {
+      const req = httpGet(`http://127.0.0.1:${webHandle.port}/api/events`, (resp) => {
+        let settled = false;
+        resp.setEncoding("utf8");
+        resp.on("data", (c) => {
+          if (settled) return;
+          settled = true;
+          resolve({ ct: resp.headers["content-type"] || "", first: String(c) });
+          resp.destroy();
+          req.destroy();
+        });
+        resp.on("error", reject);
+      });
+      req.on("error", reject);
+    });
+    check("web.serves SSE content-type",
+      String(sse.ct).startsWith("text/event-stream") && sse.first.length > 0);
+
+    // registerWebCommand seam: registers the /ithacus-web command group.
+    const fakePi = { registerCommand: (name, opts) => { fakePi.commandName = name; fakePi.commandOpts = opts; } };
+    const configStub = { ui: { webUi: true } };
+    webMod.registerWebCommand(fakePi, stubWebRuntime(), configStub);
+    check("web.registerWebCommand registers /ithacus-web", fakePi.commandName === "ithacus-web");
+
+    await new Promise((r) => setTimeout(r, 60)); // let the SSE socket settle
+    await webHandle.close();
+    check("web.stopWebServer reports stopped", webMod.webStatus().includes("stopped"));
+
+    // Tear down the self-contained mirror layout.
+    try { rmSync(webDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
   // ---- summary ----------------------------------------------------------

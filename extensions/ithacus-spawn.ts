@@ -31,6 +31,28 @@ import {
 } from "./ithacus-agents.js";
 import { loadPiSetupConfig } from "./ithacus-provider-config.js";
 import { resolveProviderForModel } from "../src/provider-resolver.js";
+import { fileURLToPath } from "node:url";
+
+// ---------------------------------------------------------------------------
+// Child extension (mailbox tool)
+// ---------------------------------------------------------------------------
+
+/**
+ * Absolute path to the minimal extension loaded into EVERY dispatched child
+ * subprocess via `-e/--extension`. With it, `ithacus-mailbox` is registered
+ * in the fresh child pi process; without it the tool never registers and pi's
+ * `--tools` allowlist silently drops the unknown name (child transcripts showed
+ * only built-in tools). See extensions/ithacus-child-mailbox.ts for details.
+ *
+ * Imports in the child extension are resolved by pi's extension loader (the
+ * same jiti-based loader that loads the parent extension in the interactive
+ * session), so the `.js`-suffixed relative imports of sibling `src/extensions`
+ * TypeScript modules resolve the same way here. PREVENT-ITH-004: the child
+ * extension performs no network I/O.
+ */
+export const CHILD_MAILBOX_EXTENSION = fileURLToPath(
+  new URL("./ithacus-child-mailbox.ts", import.meta.url),
+);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -227,6 +249,9 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
   // events (tool_execution_start/end, message_end+usage) the live store
   // parses in real time. Already wired since the dispatch tool landed.
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
+  // Load the ithacus mailbox extension into the child (see CHILD_MAILBOX_EXTENSION).
+  // Required so `--tools` below does not drop the unregistered `ithacus-mailbox`.
+  args.push("-e", CHILD_MAILBOX_EXTENSION);
   if (resolvedModel) args.push("--model", resolvedModel);
   if (resolvedProvider) args.push("--provider", resolvedProvider);
   if (tools && tools.length > 0) args.push("--tools", tools.join(","));

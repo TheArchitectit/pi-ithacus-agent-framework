@@ -13,6 +13,8 @@ target/
 
 # Smoke test temp dirs (created under repo root so typebox resolves)
 .smoke-ext-tmp-*
+.smoke-web-tmp-*
+.smoke-pub-tmp-*
 
 # IDE
 .idea/

@@ -84,6 +84,7 @@ export const workerStatus = await import(join(buildDir, 'worker-status.ts'))
 export const permissions = await import(join(buildDir, 'permissions.ts'))
 export const extensionTrust = await import(join(buildDir, 'extension-trust.ts'))
 export const redact = await import(join(buildDir, 'redact.ts'))
+export const liveCardToggles = await import(join(buildDir, 'live-card-toggles.ts'))
 
 export let failures = 0;
 export function check(name, cond) {

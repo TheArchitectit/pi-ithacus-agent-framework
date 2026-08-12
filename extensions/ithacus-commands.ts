@@ -25,7 +25,14 @@ import {
   getLiveCardWidthMode,
   setLiveCardWidthMode,
   toggleLiveCardWidthMode,
+  cycleLiveCardSize,
+  setLiveCardSize,
+  getLiveCardCurrentSize,
 } from "./ithacus-live-card.js";
+// Sprint 5.27 §3.2: the named size list ('small'|'medium'|'large') and its
+// order come from the pi-agnostic src module (not the adapter), so the
+// command's size-arg validation matches the pure width math 1:1.
+import { LIVE_CARD_SIZES } from "../src/live-card-toggles.js";
 
 function captureResolved(ctx: any): ResolvedModel {
   const m = ctx?.model;
@@ -135,6 +142,15 @@ export function registerTeamCommands(
   // shipped — removeLive() needs per-dispatch ids which listLive() does not
   // enumerate (AgentLive carries no id field), and ithacus-live.ts is
   // spec-locked to the listLive addition only. Deviation reported upstream.
+  // ---- /ithacus-live size / hide / show (Sprint 5.27 §3.2/§3.3) --------
+  //   size status            → current size (or "legacy auto" when unset)
+  //   size next              → small → medium → large → small (+ persist)
+  //   size small|medium|large→ set explicitly (+ persist)
+  //   hide / show            → setHidden on the mounted card; hide also
+  //                            persists card_hidden=true so a RESUME starts
+  //                            hidden (dispatch applies setHidden on onHandle)
+  // Persist via the repo ith_kv keys "card_size" / "card_hidden" when a store
+  // exists; without one the module toggles still apply (session-only).
   registerCmd("ithacus-live", async (args) => {
     const parts = ((args as string)?.trim() ?? "").split(/\s+/).filter(Boolean);
     const describe = (): string =>
@@ -146,6 +162,33 @@ export function registerTeamCommands(
         /* persist is best-effort — the module toggle already took effect */
       }
     };
+
+    // Sprint 5.27 §3.2 helpers for the named card sizes.
+    const describeSize = (): string => {
+      const cur = getLiveCardCurrentSize();
+      return cur
+        ? `ithacus live card size: ${cur}`
+        : "ithacus live card size: unset (legacy auto/fixed width)";
+    };
+    const persistSize = (size: "small" | "medium" | "large"): void => {
+      try {
+        runtime?.store?.setKv("card_size", size);
+      } catch {
+        /* persist is best-effort */
+      }
+    };
+    // Sprint 5.27 §3.3 helpers: reach the currently MOUNTED card's handle (if
+    // any) without forcing a new render cycle; remember the hide preference
+    // so a resumed session (new overlay, new handle) starts hidden.
+    const mounted = () => runtime?.liveCardHandle ?? null;
+    const persistHidden = (hidden: boolean): void => {
+      try {
+        runtime?.store?.setKv("card_hidden", hidden ? "true" : "false");
+      } catch {
+        /* persist is best-effort */
+      }
+    };
+
     if (parts[0] === "width") {
       const sub = parts[1];
       if (sub === "auto" || sub === "fixed") {
@@ -160,6 +203,37 @@ export function registerTeamCommands(
         return describe();
       }
       return 'usage: /ithacus-live width [auto|fixed|toggle|status]';
+    }
+    // Sprint 5.27 §3.2 — named card sizes.
+    if (parts[0] === "size") {
+      const sub = parts[1];
+      if (sub === "status") return describeSize();
+      if (sub === "next") {
+        const next = cycleLiveCardSize();
+        persistSize(next);
+        return describeSize();
+      }
+      if (LIVE_CARD_SIZES.includes(sub as "small")) {
+        const size = sub as "small" | "medium" | "large";
+        setLiveCardSize(size);
+        persistSize(size);
+        return describeSize();
+      }
+      return "usage: /ithacus-live size [small|medium|large|next|status]";
+    }
+    // Sprint 5.27 §3.3 — hide / show the currently mounted card.
+    if (parts[0] === "hide") {
+      const h = mounted();
+      if (!h) return "ithacus live: no card mounted right now (start a dispatch first)";
+      try { h.setHidden(true); } catch { /* best-effort */ }
+      persistHidden(true);
+      return "ithacus live: card hidden (resumed sessions start hidden until /ithacus-live show)";
+    }
+    if (parts[0] === "show") {
+      const h = mounted();
+      if (h) { try { h.setHidden(false); } catch { /* best-effort */ } }
+      persistHidden(false);
+      return "ithacus live: card shown";
     }
     return describe(); // no arg → status
   });

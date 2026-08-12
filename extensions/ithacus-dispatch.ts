@@ -72,6 +72,8 @@ import { ToolVisibility } from "../src/tool-visibility.js";
 import { resolvePermissions } from "../src/permissions.js";
 import { applyTrustCeiling, trustFromSource } from "../src/extension-trust.js";
 import { redactForAudit } from "../src/redact.js";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { discoverIthacusAgents, findAgent } from "./ithacus-agents.js";
 
 // Compat re-export (Sprint 5.13 spawn-layer extraction): ithacus-team.ts:22
@@ -92,6 +94,63 @@ interface DispatchDetails {
   providerSource?: string;
   durationMs: number;
   success: boolean;
+}
+
+/**
+ * Write a completion summary to `<repo>/.pi/ithacus/dispatch-completions/<id>.json`
+ * so every dispatch leaves a durable artifact (dispatch id, agent, status,
+ * duration, tail of the transcript). Best-effort + non-fatal — a dispatch must
+ * never fail because the audit trail could not be written. The filename is a
+ * sanitized version of the pi tool-call id + timestamp. Zero network.
+ *
+ * The target dir is the RUNTIME's per-repo state dir (runtime.currentStateDir,
+ * refreshed with a no-op-safe bindRepo), NOT a direct config import — keeps
+ * this module's import graph free of src/config.ts (whose ./permissions.js
+ * specifier the smoke-ext harness cannot remap). When there is no runtime
+ * (headless/stub), the completion file is skipped (belt-and-braces only).
+ */
+function writeDispatchCompletion(runtime: IthRuntime | undefined, info: {
+  cwd: string | undefined;
+  dispatchId: string;
+  agentType: string;
+  res: { success: boolean; exitCode: number; durationMs: number; model?: string; provider?: string; output?: string; stderr?: string; error?: string } | undefined;
+  startTime: number;
+  task: string;
+  paramsModel?: string;
+  paramsProvider?: string;
+}): void {
+  try {
+    if (!runtime) return;
+    runtime.bindRepo(info.cwd);
+    const dir = join(runtime.currentStateDir, "dispatch-completions");
+    mkdirSync(dir, { recursive: true });
+    const safeId = info.dispatchId.replace(/[^A-Za-z0-9._-]/g, "_");
+    const res = info.res;
+    writeFileSync(
+      join(dir, `${safeId}.json`),
+      JSON.stringify(
+        {
+          dispatchId: info.dispatchId,
+          agent: info.agentType,
+          status: res?.success ? "success" : "failed",
+          exitCode: res?.exitCode ?? 1,
+          durationMs: res?.durationMs ?? Date.now() - info.startTime,
+          startedAt: new Date(info.startTime).toISOString(),
+          finishedAt: new Date().toISOString(),
+          model: res?.model ?? info.paramsModel,
+          provider: res?.provider ?? info.paramsProvider,
+          error: res?.error,
+          task: info.task.slice(0, 200),
+          outputTail: res?.output ? res.output.slice(-2000) : undefined,
+          stderrTail: res?.stderr ? res.stderr.slice(-500) : undefined,
+        },
+        null,
+        2,
+      ),
+    );
+  } catch {
+    /* non-fatal */
+  }
 }
 
 const DispatchParams = Type.Object({
@@ -343,6 +402,18 @@ export function registerDispatchTool(pi: ExtensionAPI, runtime?: IthRuntime): vo
         });
         cardRef.current?.markDone();
         runtime?.dispatchEnded(agentType);
+        // Durable audit trail: every dispatch leaves a completion file at
+        // <repo>/.pi/ithacus/dispatch-completions/<id>.json (best-effort).
+        writeDispatchCompletion(runtime, {
+          cwd: ctx.cwd,
+          dispatchId,
+          agentType,
+          res,
+          startTime,
+          task: params.task,
+          paramsModel: params.model,
+          paramsProvider: params.provider,
+        });
       }
       // Final result: a visible status header (agent/model/duration/status)
       // PREPENDED to the child's output — so the parent LLM and any tool
