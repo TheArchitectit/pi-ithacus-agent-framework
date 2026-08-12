@@ -8,8 +8,20 @@
  */
 
 import type { HandoffContext, HandoffResult, AgentCapability, HandoffReason } from './types-sprint-5.3.js';
+import type { IthacusEvent } from './events.js';
 
-/** Injectable handoff acceptance policy. */
+/** Sprint 5.22 (docs/DESIGN_LIVE_A2A_ACCOUNTING.md §4.2): optional emitter ctx
+ *  for the handoff manager. `publish` is best-effort (publish-never-throws) —
+ *  a throwing subscriber can never break the routing hot path. Persisted
+ *  history (getHistory) stays SSOT; these events are the live stream only. */
+export interface HandoffEmitCtx {
+  publish?: (ev: IthacusEvent) => void;
+}
+
+const NOOP_PUBLISH = (_ev: IthacusEvent): void => {
+  /* noop */
+};
+
 export type HandoffPolicy = (ctx: HandoffContext, agent: AgentCapability) => Promise<boolean>;
 
 const defaultPolicy: HandoffPolicy = async (ctx, agent) => {
@@ -29,9 +41,12 @@ export class AgentHandoffManager {
   private agents = new Map<string, AgentCapability>();
   private handoffs: Array<{ ctx: HandoffContext; result?: HandoffResult }> = [];
   private policy: HandoffPolicy;
+  private publish: (ev: IthacusEvent) => void;
+  private handoffSeq = 0;
 
-  constructor(policy: HandoffPolicy = defaultPolicy) {
+  constructor(policy: HandoffPolicy = defaultPolicy, ctx?: HandoffEmitCtx) {
     this.policy = policy;
+    this.publish = ctx?.publish ?? NOOP_PUBLISH;
   }
 
   /** Register an agent. */
@@ -46,6 +61,17 @@ export class AgentHandoffManager {
   /** Initiate a handoff. Routes to a capable agent (or a specific toAgent if set). */
   async handoff(ctx: Omit<HandoffContext, 'ts'> & { ts?: number }): Promise<HandoffResult> {
     const full: HandoffContext = { ...ctx, ts: ctx.ts ?? Date.now() };
+    this.handoffSeq++;
+    // Sprint 5.22: handoff_initiated on every request (open handoffs carry
+    // to:null — capability-based routing). Best-effort. The STORE/history is
+    // still the SSOT; the event is the live stream.
+    this.safeEmit({
+      type: 'handoff_initiated',
+      from: full.fromAgent,
+      to: full.toAgent ?? null,
+      reason: full.reason,
+      ts: full.ts,
+    });
     // specific target
     if (full.toAgent) {
       const agent = this.agents.get(full.toAgent);
@@ -58,6 +84,7 @@ export class AgentHandoffManager {
       if (accepted) agent.load = Math.min(1, agent.load + 0.2);
       const r: HandoffResult = { accepted, toAgent: full.toAgent, reason: accepted ? undefined : 'rejected by policy', ts: full.ts };
       this.handoffs.push({ ctx: full, result: r });
+      if (accepted) this.safeEmit(this.acceptedEvent(r, full));
       return r;
     }
     // capability-based routing: find best candidate
@@ -74,12 +101,34 @@ export class AgentHandoffManager {
         agent.load = Math.min(1, agent.load + 0.2);
         const r: HandoffResult = { accepted: true, toAgent: agent.agentId, ts: full.ts };
         this.handoffs.push({ ctx: full, result: r });
+        this.safeEmit(this.acceptedEvent(r, full));
         return r;
       }
     }
     const r: HandoffResult = { accepted: false, toAgent: '', reason: 'all capable agents rejected', ts: full.ts };
     this.handoffs.push({ ctx: full, result: r });
     return r;
+  }
+
+  /** Best-effort listener emission — a throwing subscriber can never break
+   *  the handoff routing hot path (DESIGN_EVENT_STREAM.md §2.2 contract). */
+  private safeEmit(ev: IthacusEvent): void {
+    try {
+      this.publish(ev);
+    } catch {
+      /* emission never throws into routing */
+    }
+  }
+
+  /** Build the handoff_accepted event for a successful result. */
+  private acceptedEvent(r: HandoffResult, full: HandoffContext): IthacusEvent {
+    return {
+      type: 'handoff_accepted',
+      handoffId: `ho-${this.handoffSeq}-${full.ts}`,
+      from: full.fromAgent,
+      to: r.toAgent || (full.toAgent ?? ''),
+      ts: full.ts,
+    };
   }
 
   /** Find candidate agents matching required capabilities, sorted by load (ascending). */
@@ -109,6 +158,6 @@ export class AgentHandoffManager {
   }
 }
 
-export function createHandoffManager(policy?: HandoffPolicy): AgentHandoffManager {
-  return new AgentHandoffManager(policy);
+export function createHandoffManager(policy?: HandoffPolicy, ctx?: HandoffEmitCtx): AgentHandoffManager {
+  return new AgentHandoffManager(policy, ctx);
 }

@@ -20,6 +20,32 @@ import type {
   AsyncRunState,
   AsyncRunStatus,
 } from "./types.js";
+import type { IthacusEvent } from "./events.js";
+
+/** The subset of IthacusEvent the A2A rollup consumes (read-able event shape). */
+interface IthacusEventLike {
+  type: string;
+  ts: number;
+  from?: string;
+  to?: string;
+  agentId?: string;
+  count?: number;
+}
+
+/** One ith_a2a_stats rollup row (fleet view). */
+export interface A2aStatRow {
+  fromAgent: string;
+  toAgent: string;
+  day: string;
+  sent: number;
+  read: number;
+  handoffs: number;
+}
+
+/** Per-day bucket key (YYYY-MM-DD, UTC) — the midnights rollup boundary. */
+export function dayOf(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 10);
+}
 
 function parseDependsOn(raw: string | null | undefined): string[] {
   if (!raw) return [];
@@ -64,6 +90,12 @@ CREATE TABLE IF NOT EXISTS ith_retries (
   fromModel TEXT, toModel TEXT, reason TEXT, compacted INTEGER,
   startedAt INTEGER NOT NULL, durationMs INTEGER NOT NULL, retryOf INTEGER);
 CREATE INDEX IF NOT EXISTS ix_ith_retries_dispatch ON ith_retries(dispatchId);
+CREATE TABLE IF NOT EXISTS ith_a2a_stats (
+  from_agent TEXT NOT NULL, to_agent TEXT NOT NULL, day TEXT NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0, read INTEGER NOT NULL DEFAULT 0,
+  handoffs INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (from_agent, to_agent, day));
+CREATE INDEX IF NOT EXISTS ix_ith_a2a_stats_day ON ith_a2a_stats(day);
 `;
 
 export class IthStore {
@@ -397,6 +429,58 @@ export class IthStore {
       .prepare(`SELECT COUNT(*) AS n FROM ith_retries WHERE dispatchId = ?`)
       .get(dispatchId) as unknown as { n: number };
     return row.n;
+  }
+
+  // ---- Sprint 5.22 A2A accounting rollup (ith_a2a_stats) -----------------
+
+  /** The A2A rollup row shape (see ith_a2a_stats table). */
+  public recordA2aEvent(ev: IthacusEventLike): void {
+    const day = dayOf(ev.ts);
+    if (ev.type === 'message_sent') {
+      this.addA2aCount(ev.from ?? '', ev.to ?? '', day, 'sent', 1);
+    } else if (ev.type === 'message_read') {
+      // Reads are attributed to the reading agent (we don't know the sender
+      // from a read event) under a "*" target so they aggregate per reader.
+      this.addA2aCount(ev.agentId ?? '', '*', day, 'read', ev.count ?? 0);
+    } else if (ev.type === 'handoff_accepted') {
+      this.addA2aCount(ev.from ?? '', ev.to ?? '', day, 'handoffs', 1);
+    }
+    // handoff_initiated / presence_changed are not counted in the rollup
+    // (initiated always precedes an accepted or rejected; presence is not
+    // a message/handoff aggregate).
+  }
+
+  private addA2aCount(
+    from: string,
+    to: string,
+    day: string,
+    column: 'sent' | 'read' | 'handoffs',
+    delta: number,
+  ): void {
+    // Upsert: ensure the row exists, then increment the target column by delta.
+    this.db.prepare(
+      `INSERT INTO ith_a2a_stats (from_agent, to_agent, day, sent, read, handoffs)
+       VALUES (?, ?, ?, 0, 0, 0)
+       ON CONFLICT(from_agent, to_agent, day) DO NOTHING`,
+    ).run(from ?? '', to ?? '', day);
+    this.db.prepare(
+      `UPDATE ith_a2a_stats SET ${column} = ${column} + ?
+       WHERE from_agent = ? AND to_agent = ? AND day = ?`,
+    ).run(delta, from ?? '', to ?? '', day);
+  }
+
+  /** All A2A rollup rows (fleet view / /ithacus-inbox --stats). */
+  public getA2aStats(): A2aStatRow[] {
+    return (this.db.prepare(`SELECT * FROM ith_a2a_stats`).all() as unknown as Array<Record<string, unknown>>).map(
+      (row) => ({
+        fromAgent: String(row.from_agent),
+        toAgent: String(row.to_agent),
+        day: String(row.day),
+        sent: Number(row.sent),
+        read: Number(row.read),
+        handoffs: Number(row.handoffs),
+      }),
+    );
   }
 
   close(): void {

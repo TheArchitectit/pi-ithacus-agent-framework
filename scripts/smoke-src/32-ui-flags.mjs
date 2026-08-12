@@ -118,3 +118,8 @@ check("s32 all defaults true",
   check("s32 parseUiFlags partial merge keeps others on",
     p.widget === false && p.liveCard === true && p.menuOverlay === true);
 }
+
+// Sprint 5.22: module 32 runs at import time (top-level) — provide a no-op
+// run so smoke-src.mjs await s32.run(ctx) does not throw and silently skip s33
+// (the silent ALL-PASSED-after-s32 bug).
+export async function run() {}

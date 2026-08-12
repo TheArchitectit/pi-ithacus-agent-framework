@@ -32,6 +32,7 @@ import * as s29 from "./smoke-src/29-permissions.mjs";
 import * as s30 from "./smoke-src/30-remote-capabilities.mjs";
 import * as s31 from "./smoke-src/31-card-toggles.mjs";
 import * as s32 from "./smoke-src/32-ui-flags.mjs";
+import * as s33 from "./smoke-src/33-a2a-accounting.mjs";
 
 import { failures, buildDir, tmpRepo } from "./smoke-src/_harness.mjs";
 import { rmSync } from "node:fs";
@@ -71,6 +72,7 @@ try {
   await s30.run(ctx);
   await s31.run(ctx);
   await s32.run(ctx);
+  await s33.run(ctx);
 } finally {
   try { ctx.store?.close(); } catch {}
 }

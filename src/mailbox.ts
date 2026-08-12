@@ -13,6 +13,31 @@
 import { randomUUID } from "node:crypto";
 import type { IthStore } from "./store.js";
 import type { IthInboxMessage } from "./types.js";
+import type { IthacusEvent } from "./events.js";
+
+/** Sprint 5.22 (docs/DESIGN_LIVE_A2A_ACCOUNTING.md §4.1): an optional emitter
+ *  ctx threaded into the mailbox producers. `publish` is best-effort per the
+ *  event-stream contract (DESIGN_EVENT_STREAM.md §2.2) — a missing or throwing
+ *  subscriber can never break the mailbox hot path. Defaults to noop, so every
+ *  existing call site compiles unchanged (additive optional param). */
+export interface MailboxEmitCtx {
+  publish?: (ev: IthacusEvent) => void;
+}
+
+const NOOP_PUBLISH = (_ev: IthacusEvent): void => {
+  /* noop — mailbox stays pi-agnostic when no bus is wired */
+};
+
+/** Publish one A2A event, best-effort: a throwing subscriber must not break
+ *  the mailbox write. Returns/logs nothing. */
+function safePublish(ctx: MailboxEmitCtx | undefined, ev: IthacusEvent): void {
+  const publish = ctx?.publish ?? NOOP_PUBLISH;
+  try {
+    publish(ev);
+  } catch {
+    /* event emission never throws into the mailbox hot path */
+  }
+}
 
 export const INTERACTIVE_ID = "interactive";
 
@@ -31,7 +56,11 @@ export interface MailboxSendOpts {
   now?: number;
 }
 
-export function mailboxSend(store: IthStore, opts: MailboxSendOpts): IthInboxMessage {
+export function mailboxSend(
+  store: IthStore,
+  opts: MailboxSendOpts,
+  ctx?: MailboxEmitCtx,
+): IthInboxMessage {
   if (!opts.to.trim()) throw new Error("mailboxSend: recipient `to` must be non-empty");
   if (!opts.payload.trim()) throw new Error("mailboxSend: `payload` must be non-empty");
   const msg: IthInboxMessage = {
@@ -43,22 +72,57 @@ export function mailboxSend(store: IthStore, opts: MailboxSendOpts): IthInboxMes
     read: false,
   };
   store.sendMessage(msg);
+  // Sprint 5.22: live A2A accounting — metadata-only event + rollup row.
+  const event: IthacusEvent = {
+    type: "message_sent",
+    from: opts.from,
+    to: opts.to,
+    msgId: msg.id,
+    kind: "direct",
+    ts: msg.ts,
+  };
+  safePublish(ctx, event);
+  store.recordA2aEvent(event);
   return msg;
 }
 
-/** Fan-out: one row per recipient. Dedupes, excludes the sender. */
+/** Fan-out: one row per recipient. Dedupes, excludes the sender. Emits exactly
+ *  ONE message_sent event per wall-clock broadcast (kind "broadcast", to "*",
+ *  DESIGN_LIVE_A2A_ACCOUNTING.md §4.1) regardless of recipient count. */
 export function mailboxBroadcast(
   store: IthStore,
   opts: { from: string; payload: string; recipients: string[]; now?: number },
+  ctx?: MailboxEmitCtx,
 ): IthInboxMessage[] {
   if (!opts.payload.trim()) throw new Error("mailboxBroadcast: `payload` must be non-empty");
   const sent: IthInboxMessage[] = [];
   const seen = new Set<string>();
+  const now = opts.now ?? Date.now();
   for (const to of opts.recipients) {
     if (!to || to === opts.from || seen.has(to)) continue;
     seen.add(to);
-    sent.push(mailboxSend(store, { to, from: opts.from, payload: opts.payload, now: opts.now }));
+    const msg: IthInboxMessage = {
+      id: `msg-${randomUUID()}`,
+      agentId: to,
+      fromAgent: opts.from,
+      payload: opts.payload,
+      ts: now,
+      read: false,
+    };
+    store.sendMessage(msg);
+    sent.push(msg);
   }
+  // One message_sent per wall-clock send (the whole broadcast = one send).
+  const event: IthacusEvent = {
+    type: "message_sent",
+    from: opts.from,
+    to: "*",
+    msgId: sent.length > 0 ? sent[0].id : `msg-${randomUUID()}`,
+    kind: "broadcast",
+    ts: now,
+  };
+  safePublish(ctx, event);
+  store.recordA2aEvent(event);
   return sent;
 }
 
@@ -73,13 +137,32 @@ export interface MailboxInboxResult {
  */
 export function mailboxInbox(
   store: IthStore,
-  opts: { agentId: string; markRead: boolean; includeRead?: boolean },
+  opts: { agentId: string; markRead: boolean; includeRead?: boolean; now?: number },
+  ctx?: MailboxEmitCtx,
 ): MailboxInboxResult {
   const messages = opts.includeRead
     ? store.inbox(opts.agentId, true)
     : store.unread(opts.agentId);
+  let newlyRead = 0;
   if (opts.markRead) {
-    for (const m of messages) if (!m.read) store.markRead(m.id);
+    for (const m of messages) {
+      if (!m.read) {
+        store.markRead(m.id);
+        newlyRead++;
+      }
+    }
+  }
+  // Sprint 5.22: message_read carries the count of messages just marked read
+  // (skip when 0 — a pure peek/read-of-empty emits nothing).
+  if (newlyRead > 0) {
+    const event: IthacusEvent = {
+      type: "message_read",
+      agentId: opts.agentId,
+      count: newlyRead,
+      ts: opts.now ?? Date.now(),
+    };
+    safePublish(ctx, event);
+    store.recordA2aEvent(event);
   }
   return { messages, unreadCount: store.unreadCount(opts.agentId) };
 }

@@ -81,4 +81,19 @@ export type IthacusEvent =
       tool: string; ok: boolean; durationMs: number; ts: number }
   | { type: "agent_done"; runId: string; agentId: string;
       status: "done" | "failed" | "stopped" | "cancelled"; failureKind?: WorkerFailureKind; ts: number }
-  | { type: "run_finished"; runId: string; status: string; ts: number };
+  | { type: "run_finished"; runId: string; status: string; ts: number }
+  // Sprint 5.22 (docs/DESIGN_LIVE_A2A_ACCOUNTING.md §3): live A2A accounting —
+  // peer-to-peer mailbox + handoff + presence traffic made live-visible, the
+  // same way parent→child dispatch is. Metadata-only (NO message bodies —
+  // privacy + payload size; bodies stay in ith_inbox). runId-optional: A2A
+  // traffic is run-independent, so these carry a runId only when the sender
+  // is mid-dispatch (card renders under a run when attributed, else in a
+  // fleet-wide strip).
+  | { type: "message_sent"; from: string; to: string; msgId: string;
+      kind: "direct" | "broadcast"; ts: number; runId?: string }
+  | { type: "message_read"; agentId: string; count: number; ts: number; runId?: string }
+  | { type: "handoff_initiated"; from: string; to: string | null;
+      reason: string; ts: number; runId?: string }
+  | { type: "handoff_accepted"; handoffId: string; from: string; to: string;
+      ts: number; runId?: string }
+  | { type: "presence_changed"; agentId: string; state: string; ts: number; runId?: string };
