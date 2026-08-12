@@ -9,6 +9,9 @@
  */
 
 import type { Checkpoint, CheckpointSummary } from './types.js';
+import type { IthStore } from './store.js';
+import type { CheckpointMeta } from './checkpoint-manager.js';
+import { mirrorCheckpoint as persistMirror } from './checkpoint-manager.js';
 
 /** Minimal conversation message shape used for pruning. */
 export interface ConversationMessage {
@@ -116,4 +119,31 @@ export function rewindToCheckpoint(
   checkpoint: Checkpoint,
 ): ConversationMessage[] {
   return messages.filter(m => m.turn < checkpoint.turnIndex);
+}
+
+// ---- Sprint 5.16: mirror marks into the checkpoint manager store ----------
+// (docs/DESIGN_CHECKPOINT_MANAGER.md §2.1 — the existing in-conversation marks
+// remain the source; this manager mirrors them into sqlite for cross-run
+// visibility). The persistence lives in checkpoint-manager.ts; this file only
+// derives the label + message count and delegates, so there is no import cycle
+// (checkpoint-manager imports checkpoint types as type-only).
+
+/** Derive a short human label for a checkpoint (mirror target). */
+export function checkpointLabel(cp: Checkpoint): string {
+  const first = (cp.summary ?? '').split('\n')[0].trim();
+  return first ? first.slice(0, 40) : `checkpoint @ turn ${cp.turnIndex}`;
+}
+
+/**
+ * Mirror an in-conversation checkpoint mark into the sqlite manager store so
+ * it is visible across runs (list/delete/archive/compare). Persists id,
+ * runId, label, createdAt, summary, the pruned message count and the post-
+ * prune token estimate. Returns the persisted CheckpointMeta.
+ */
+export function mirrorCheckpoint(
+  store: IthStore,
+  cp: Checkpoint,
+  messages: ConversationMessage[],
+): CheckpointMeta {
+  return persistMirror(store, cp, messages.length, checkpointLabel(cp));
 }

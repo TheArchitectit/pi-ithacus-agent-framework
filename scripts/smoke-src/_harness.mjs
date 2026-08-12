@@ -41,6 +41,7 @@ export const profiles = await import(join(buildDir, "model-profiles.ts"));
 export const validator = await import(join(buildDir, "validator.ts"));
 export const hashline = await import(join(buildDir, "hashline.ts"));
 export const checkpoint = await import(join(buildDir, "checkpoint.ts"));
+export const checkpointManager = await import(join(buildDir, "checkpoint-manager.ts"));
 export const configFormats = await import(join(buildDir, "config-formats.ts"));
 export const streamRules = await import(join(buildDir, "stream-rules.ts"));
 export const advisor = await import(join(buildDir, "advisor.ts"));

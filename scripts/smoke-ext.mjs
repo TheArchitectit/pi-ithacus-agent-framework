@@ -35,6 +35,7 @@
 // no subprocess, no TUI.
 
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -1206,6 +1207,60 @@ try {
 
     // Tear down the self-contained mirror layout.
     try { rmSync(webDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
+  // ---- Sprint 5.16 — /ithacus-checkpoints overlay + command registration --
+  // Exercises registerCheckpointsCommand (registers /ithacus-checkpoints) and
+  // the overlay Component (list/archive/delete/compare) over a real node:sqlite
+  // store on a scratch git repo. No pi TUI, no network (PREVENT-ITH-004).
+  {
+    const ovMod = await import(join(tmpDir, "ithacus-checkpoints-overlay.ts"));
+    const cmMod = await import(join(tmpDir, "checkpoint-manager.ts"));
+    const storeMod = await import(join(tmpDir, "store.ts"));
+
+    // Scratch GIT repo so IthStore scopes to <repo>/.pi/ithacus (fully
+    // hermetic, no shared/global DB across smoke runs).
+    const ckRepo = mkdtempSync(join(repoRoot, ".smoke-ckpt-tmp-"));
+    execSync("git init -q && git config user.email t@t.co && git config user.name t && git commit -q --allow-empty -m init", { cwd: ckRepo });
+    const ovStore = new storeMod.IthStore(ckRepo, {});
+
+    // Seed two checkpoints via the src manager.
+    cmMod.createCheckpointMeta(ovStore, { runId: "ck-run", label: "alpha", messageCount: 10, tokenEstimate: 400 });
+    cmMod.createCheckpointMeta(ovStore, { runId: "ck-run", label: "beta", messageCount: 20, tokenEstimate: 900 });
+    check("ov.seed lists 2 checkpoints", cmMod.listCheckpoints(ovStore).length === 2);
+
+    // registerCheckpointsCommand registers /ithacus-checkpoints.
+    const ovPi = { registerCommand: (name, def) => { ovPi.registered = { name, def }; }, registerTool: () => {}, on: () => {}, setModel: () => {} };
+    const ovRuntime = { store: ovStore, bindRepo: () => {} };
+    ovMod.registerCheckpointsCommand(ovPi, ovRuntime);
+    check("ov.command registers /ithacus-checkpoints", ovPi.registered?.name === "ithacus-checkpoints");
+    check("ov.command has handler", typeof ovPi.registered?.def?.handler === "function");
+
+    // Drive the handler: capture the Component factory from a fake ui.custom,
+    // then instantiate + render with a fake theme (same seam as §3c/setup).
+    let capturedFactory = null;
+    const fakeUi = { custom: async (factory) => { capturedFactory = factory; return null; } };
+    await ovPi.registered.def.handler("", { cwd: ckRepo, ui: fakeUi });
+    check("ov.handler captures component factory", typeof capturedFactory === "function");
+
+    const theme = { fg: (_c, t) => t, bold: (t) => t };
+    const component = capturedFactory({ requestRender: () => {} }, theme, {}, () => {});
+    const lines = component.render(80).join("\n");
+    check("ov.render lists labels", lines.includes("alpha") && lines.includes("beta"));
+    check("ov.render shows metadata", lines.includes("msg") && lines.includes("tok"));
+
+    // lifecycle keys: q closes (done called), r refreshes, a archives.
+    let closed = false;
+    const done = () => { closed = true; };
+    const cmp2 = capturedFactory({ requestRender: () => {} }, theme, {}, done);
+    cmp2.handleInput("q");
+    check("ov.handleInput q closes", closed === true);
+    cmp2.handleInput("a");
+    const archived = cmMod.listCheckpoints(ovStore, { includeArchived: true })[0];
+    check("ov.handleInput a archives via store", archived?.archived === true);
+
+    ovStore.close();
+    try { rmSync(ckRepo, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
   // ---- summary ----------------------------------------------------------
