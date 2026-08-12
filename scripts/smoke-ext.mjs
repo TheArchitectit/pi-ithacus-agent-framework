@@ -35,6 +35,7 @@
 // no subprocess, no TUI.
 
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { get as httpGet } from "node:http"; // loopback client for the §3e web-dashboard smoke
@@ -259,6 +260,48 @@ try {
   check("spawn.args has --tools", recordedArgs.includes("--tools"));
   check("spawn.args reviewer tools", recordedArgs.includes("read,grep,find,ls,bash,ithacus-mailbox"));
   check("spawn.args has Task prefix", recordedArgs.some((a) => a.startsWith("Task: ")));
+
+  // ---- FAIL-6c4a2d10: child-mailbox extension path must exist ------------
+  // Regression for the 0.6.4 dispatch-killing bug: CHILD_MAILBOX_EXTENSION
+  // hardcoded `./ithacus-child-mailbox.ts`, but the published npm payload
+  // compiles to dist/extensions/*.js — pi child exited 1 on every dispatch
+  // ("Extension path does not exist"). The resolver must pick the on-disk
+  // variant (.ts from source, .js from dist) and degrade to null.
+  const spawnMod = await import(join(tmpDir, "ithacus-spawn.ts"));
+  check(
+    "spawn.CHILD_MAILBOX_EXTENSION resolved + exists",
+    typeof spawnMod.CHILD_MAILBOX_EXTENSION === "string" &&
+      existsSync(spawnMod.CHILD_MAILBOX_EXTENSION) &&
+      spawnMod.CHILD_MAILBOX_EXTENSION.includes("ithacus-child-mailbox"),
+  );
+  const eIdx = recordedArgs.indexOf("-e");
+  check(
+    "spawn.args -e path exists on disk",
+    eIdx !== -1 && existsSync(recordedArgs[eIdx + 1]),
+  );
+  // Simulated published-dist layout: only the .js sibling on disk.
+  const distSim = mkdtempSync(join(osTmpdir(), "ith-dist-sim-"));
+  writeFileSync(join(distSim, "ithacus-child-mailbox.js"), "// compiled");
+  check(
+    "spawn.resolver prefers .js in dist layout",
+    spawnMod.resolveChildMailboxPath(distSim, false) === join(distSim, "ithacus-child-mailbox.js"),
+  );
+  // Simulated source layout: only the .ts sibling on disk.
+  const srcSim = mkdtempSync(join(osTmpdir(), "ith-src-sim-"));
+  writeFileSync(join(srcSim, "ithacus-child-mailbox.ts"), "// source");
+  check(
+    "spawn.resolver prefers .ts in src layout",
+    spawnMod.resolveChildMailboxPath(srcSim, true) === join(srcSim, "ithacus-child-mailbox.ts"),
+  );
+  // Empty layout degrades to null (spawn then omits -e instead of crashing pi).
+  const emptySim = mkdtempSync(join(osTmpdir(), "ith-empty-sim-"));
+  check(
+    "spawn.resolver degrades to null when absent",
+    spawnMod.resolveChildMailboxPath(emptySim, true) === null,
+  );
+  rmSync(distSim, { recursive: true, force: true });
+  rmSync(srcSim, { recursive: true, force: true });
+  rmSync(emptySim, { recursive: true, force: true });
 
   // --- mock: no --model when agent has none in frontmatter (defensive) ---
   // explore/reviewer all have models, so passing model:undefined falls back to

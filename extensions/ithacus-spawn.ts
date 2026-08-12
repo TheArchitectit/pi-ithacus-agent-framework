@@ -50,8 +50,40 @@ import { fileURLToPath } from "node:url";
  * TypeScript modules resolve the same way here. PREVENT-ITH-004: the child
  * extension performs no network I/O.
  */
-export const CHILD_MAILBOX_EXTENSION = fileURLToPath(
-  new URL("./ithacus-child-mailbox.ts", import.meta.url),
+
+/**
+ * Resolve the sibling mailbox extension to a path that ACTUALLY exists.
+ *
+ * The published npm payload is compiled: `dist/extensions/` ships only
+ * `.js` (no `.ts`), so hard-coding the `.ts` sibling pointed `-e` at a file
+ * that does not exist and every dispatched child exited 1 at pi startup
+ * ("Extension path does not exist" — the 0.6.4 dispatch-killing bug).
+ *
+ * Prefer the variant matching this module's own flavor: running stripped TS
+ * from source (`.ts`) prefers the sibling `.ts`; running compiled from dist
+ * (`.js`) prefers the sibling `.js`. Falls back to the other variant when it
+ * is the only one on disk. Returns null when neither exists so the caller can
+ * degrade (run the child without the mailbox tool) instead of crashing pi.
+ *
+ * `extensionDir`/`preferTs` are injectable for unit tests.
+ */
+export function resolveChildMailboxPath(
+  extensionDir: string,
+  preferTs: boolean,
+): string | null {
+  const stems = preferTs
+    ? ["ithacus-child-mailbox.ts", "ithacus-child-mailbox.js"]
+    : ["ithacus-child-mailbox.js", "ithacus-child-mailbox.ts"];
+  for (const stem of stems) {
+    const candidate = path.join(extensionDir, stem);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+export const CHILD_MAILBOX_EXTENSION: string | null = resolveChildMailboxPath(
+  fileURLToPath(new URL(".", import.meta.url)),
+  import.meta.url.endsWith(".ts"),
 );
 
 // ---------------------------------------------------------------------------
@@ -251,7 +283,12 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
   const args: string[] = ["--mode", "json", "-p", "--no-session"];
   // Load the ithacus mailbox extension into the child (see CHILD_MAILBOX_EXTENSION).
   // Required so `--tools` below does not drop the unregistered `ithacus-mailbox`.
-  args.push("-e", CHILD_MAILBOX_EXTENSION);
+  // Guard: only pass `-e` when the sibling actually exists. A stale/absent path
+  // makes pi exit non-zero before the task even starts, killing every dispatch
+  // (the 0.6.4 bug). Degrade to a child with its normal toolset rather than crash.
+  if (CHILD_MAILBOX_EXTENSION) {
+    args.push("-e", CHILD_MAILBOX_EXTENSION);
+  }
   if (resolvedModel) args.push("--model", resolvedModel);
   if (resolvedProvider) args.push("--provider", resolvedProvider);
   if (tools && tools.length > 0) args.push("--tools", tools.join(","));
