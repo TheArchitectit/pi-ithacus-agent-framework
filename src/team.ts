@@ -25,6 +25,7 @@ import type {
   ModelFallbackHop,
   RetryPolicy,
 } from "./types.js";
+import type { TeamSnapshotV1 } from "./types-sprint-5.21.js";
 import { generateWaves, validateDag } from "./workflow.js";
 
 // ---------------------------------------------------------------------------
@@ -273,4 +274,54 @@ export function planRun(opts: {
     agents,
     ...(opts.workflow ? { tasks: tasksFromWorkflow(opts.runId, opts.workflow) } : {}),
   };
+}
+
+/**
+ * Expanded-roster planner (Sprint 5.21, DESIGN_TEAMS_AND_SIZES.md §9).
+ * Consumes a validated & fully expanded team snapshot (TeamSnapshotV1) and
+ * produces the TeamPlan — run + slot rows + any workflow tasks — exactly like
+ * legacy planRun but from an explicit roster instead of a ModePreset.
+ * Planning stays pure and pi-agnostic; it creates the run, all slot rows, and
+ * all workflow/task rows BEFORE execution begins.
+ *
+ * legacy `planRun({ mode })` remains the compatibility wrapper over this
+ * expansion path (unchanged external behavior for tiny..mega).
+ */
+export function planRoster(opts: {
+  runId: string;
+  prompt: string;
+  /** the (versioned) preset name used as the run's modePreset label. */
+  presetName: string;
+  snapshot: TeamSnapshotV1;
+  now: number;
+  workflow?: WorkflowNode[];
+  permissionModeByRole?: Partial<Record<string, PermissionMode>>;
+}): TeamPlan {
+  const agents: IthAgent[] = opts.snapshot.slots.map((slot, i) => ({
+    id: expandedSlotRowId(opts.runId, i),
+    runId: opts.runId,
+    role: slot.role as AgentRole,
+    model: slot.model ?? DEFAULT_AGENT_MODEL,
+    provider: slot.provider ?? null,
+    status: "spawning" as const,
+    lastSeen: opts.now,
+    resultSchema: null,
+    resultValidated: false,
+    permissionMode: opts.permissionModeByRole?.[slot.role],
+  }));
+  return {
+    run: {
+      runId: opts.runId,
+      modePreset: opts.presetName ?? opts.snapshot.presetName,
+      createdAt: opts.now,
+      summary: opts.prompt.slice(0, 200),
+      status: "active",
+    },
+    agents,
+    ...(opts.workflow ? { tasks: tasksFromWorkflow(opts.runId, opts.workflow) } : {}),
+  };
+}
+
+function expandedSlotRowId(runId: string, i: number): string {
+  return `${runId}-a${i}`;
 }

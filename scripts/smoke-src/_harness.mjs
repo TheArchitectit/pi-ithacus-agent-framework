@@ -87,6 +87,11 @@ export const permissions = await import(join(buildDir, 'permissions.ts'))
 export const extensionTrust = await import(join(buildDir, 'extension-trust.ts'))
 export const redact = await import(join(buildDir, 'redact.ts'))
 export const liveCardToggles = await import(join(buildDir, 'live-card-toggles.ts'))
+// Sprint 5.19 + 5.21: named teams + versioned presets + bounded parallel.
+export const teamRegistry = await import(join(buildDir, 'team-registry.ts'))
+export const teamPresets = await import(join(buildDir, 'team-presets.ts'))
+export const teamExec = await import(join(buildDir, 'team-executor.ts'))
+export const types521 = await import(join(buildDir, 'types-sprint-5.21.ts'))
 
 export let failures = 0;
 export function check(name, cond) {

@@ -21,6 +21,7 @@ import { registerSetupCommand } from "./ithacus-setup.js";
 import { registerMenuCommand } from "./ithacus-menu.js";
 import { registerCheckpointsCommand } from "./ithacus-checkpoints-overlay.js";
 import { registerWebCommand } from "./ithacus-web.js";
+import { registerTeamsCommand } from "./ithacus-teams.js";
 import { registerVersionWidget } from "./ithacus-widget.js";
 import { maybeShowVersionBump, ownVersion } from "./ithacus-version.js";
 import { maybeShowOnLoadNotice } from "./ithacus-onboarding.js";
@@ -75,6 +76,9 @@ export default function (pi: ExtensionAPI) {
   // Sprint 5.16: `/ithacus-checkpoints` — list/manage session checkpoints
   // (archive/delete/compare) over the sqlite checkpoint manager overlay.
   registerCheckpointsCommand(pi, runtime);
+  // Sprint 5.19 + 5.21: `/ithacus-teams` — named teams + versioned presets +
+  // team-bound cron schedules (overlay + list/show/create/delete/schedule).
+  registerTeamsCommand(pi, runtime);
   // Sprint 5.27 §3.4: `/ithacus-web` — loopback-only dashboard server
   // (start|stop|status). Binds 127.0.0.1 only; serves the local UI over
   // /api/* + SSE from the in-process event bus (PREVENT-ITH-004).

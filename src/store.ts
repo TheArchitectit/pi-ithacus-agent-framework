@@ -22,6 +22,38 @@ import type {
 } from "./types.js";
 import type { IthacusEvent } from "./events.js";
 import type { ConsolidationPlan } from "./consolidate.js";
+import type { TeamDefinition, TeamSchedule } from "./team-registry.js";
+import type { StoredTeamPreset } from "./types-sprint-5.21.js";
+
+function parseTeamDefinition(row: Record<string, unknown>): TeamDefinition {
+  const parsed: unknown = JSON.parse(String(row.defJson));
+  return parsed as TeamDefinition;
+}
+
+function parseTeamSchedule(row: Record<string, unknown>): TeamSchedule {
+  return {
+    scheduleId: String(row.scheduleId),
+    teamId: String(row.teamId),
+    cron: String(row.cron),
+    enabled: Boolean(row.enabled),
+    lastFiredAt: row.lastFiredAt == null ? undefined : Number(row.lastFiredAt),
+    nextFireAt: Number(row.nextFireAt),
+  };
+}
+
+function parseStoredPreset(row: Record<string, unknown>): StoredTeamPreset {
+  return {
+    presetId: String(row.presetId),
+    name: String(row.name),
+    source: String(row.source) as StoredTeamPreset["source"],
+    schemaVersion: Number(row.schemaVersion),
+    revision: Number(row.revision),
+    definitionJson: String(row.definitionJson),
+    status: String(row.status) as StoredTeamPreset["status"],
+    createdAt: Number(row.createdAt),
+    updatedAt: Number(row.updatedAt),
+  };
+}
 
 /** The subset of IthacusEvent the A2A rollup consumes (read-able event shape). */
 interface IthacusEventLike {
@@ -97,6 +129,26 @@ CREATE TABLE IF NOT EXISTS ith_a2a_stats (
   handoffs INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (from_agent, to_agent, day));
 CREATE INDEX IF NOT EXISTS ix_ith_a2a_stats_day ON ith_a2a_stats(day);
+CREATE TABLE IF NOT EXISTS ith_teams (
+  teamId TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+  defJson TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+  createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS ith_team_schedules (
+  scheduleId TEXT PRIMARY KEY, teamId TEXT NOT NULL,
+  cron TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  lastFiredAt INTEGER, nextFireAt INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_ith_team_schedules_team ON ith_team_schedules(teamId);
+CREATE TABLE IF NOT EXISTS ith_team_presets (
+  presetId TEXT PRIMARY KEY, name TEXT NOT NULL,
+  source TEXT NOT NULL, schemaVersion INTEGER NOT NULL,
+  revision INTEGER NOT NULL, definitionJson TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+  UNIQUE(source, name));
+CREATE TABLE IF NOT EXISTS ith_team_preset_revisions (
+  presetId TEXT NOT NULL, revision INTEGER NOT NULL,
+  definitionJson TEXT NOT NULL, createdAt INTEGER NOT NULL,
+  PRIMARY KEY (presetId, revision));
 `;
 
 export class IthStore {
@@ -161,6 +213,33 @@ export class IthStore {
       this.db.exec(`ALTER TABLE ith_memories ADD COLUMN cluster_tag TEXT`);
     }
     this.db.exec(`CREATE INDEX IF NOT EXISTS ix_ith_mem_consolidation ON ith_memories(superseded_by, collapsed_into)`);
+
+    // Sprint 5.21 (DESIGN_TEAMS_AND_SIZES.md §8): additive nullable run/agent
+    // columns for versioned team-preset snapshots. History survives preset
+    // edits; old runs keep teamPresetId = NULL and derive visibility from
+    // their existing modePreset + ith_agents rows. Idempotent, PRAGMA-guarded.
+    const runCols = cols("ith_runs");
+    if (!runCols.has("teamPresetId")) {
+      this.db.exec(`ALTER TABLE ith_runs ADD COLUMN teamPresetId TEXT`);
+    }
+    if (!runCols.has("teamPresetRevision")) {
+      this.db.exec(`ALTER TABLE ith_runs ADD COLUMN teamPresetRevision INTEGER`);
+    }
+    if (!runCols.has("teamSnapshotJson")) {
+      this.db.exec(`ALTER TABLE ith_runs ADD COLUMN teamSnapshotJson TEXT`);
+    }
+    if (!agentCols.has("slotId")) {
+      this.db.exec(`ALTER TABLE ith_agents ADD COLUMN slotId TEXT`);
+    }
+    if (!agentCols.has("agentType")) {
+      this.db.exec(`ALTER TABLE ith_agents ADD COLUMN agentType TEXT`);
+    }
+    if (!agentCols.has("definitionFingerprint")) {
+      this.db.exec(`ALTER TABLE ith_agents ADD COLUMN definitionFingerprint TEXT`);
+    }
+    if (!agentCols.has("profileId")) {
+      this.db.exec(`ALTER TABLE ith_agents ADD COLUMN profileId TEXT`);
+    }
   }
 
   createRun(run: IthRun): void {
@@ -531,6 +610,124 @@ export class IthStore {
         handoffs: Number(row.handoffs),
       }),
     );
+  }
+
+  // ---- Sprint 5.19 named teams + team-bound schedules (ith_teams / ith_team_schedules) ---
+
+  /** Save a named TeamDefinition (INSERT OR REPLACE by teamId). */
+  saveTeamDefinition(def: TeamDefinition): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_teams (teamId, name, defJson, status, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'active', ?, ?)`,
+    ).run(def.teamId, def.name, JSON.stringify(def), def.createdAt, def.updatedAt);
+  }
+  /** Get one named team by teamId. */
+  getTeamDefinition(teamId: string): TeamDefinition | null {
+    const row = this.db.prepare(`SELECT * FROM ith_teams WHERE teamId = ? AND status = 'active'`).get(teamId) as
+      | Record<string, unknown> | undefined;
+    if (!row) return null;
+    return parseTeamDefinition(row);
+  }
+  /** Get a named team by its unique kebab-case name. */
+  getTeamDefinitionByName(name: string): TeamDefinition | null {
+    const row = this.db.prepare(`SELECT * FROM ith_teams WHERE name = ? AND status = 'active'`).get(name) as
+      | Record<string, unknown> | undefined;
+    if (!row) return null;
+    return parseTeamDefinition(row);
+  }
+  /** List all non-deleted named teams. */
+  listTeamDefinitions(): TeamDefinition[] {
+    return (this.db.prepare(`SELECT * FROM ith_teams WHERE status = 'active' ORDER BY name`).all() as Array<Record<string, unknown>>).map(parseTeamDefinition);
+  }
+  /** Soft-delete a named team (status 'deleted'); returns false if absent. */
+  softDeleteTeam(teamId: string): boolean {
+    const row = this.db.prepare(`SELECT * FROM ith_teams WHERE teamId = ? AND status = 'active'`).get(teamId);
+    if (!row) return false;
+    this.db.prepare(`UPDATE ith_teams SET status = 'deleted', updatedAt = ? WHERE teamId = ?`).run(Date.now(), teamId);
+    return true;
+  }
+
+  /** Save a team-bound schedule (INSERT OR REPLACE by scheduleId). */
+  saveTeamSchedule(sched: TeamSchedule): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_team_schedules
+         (scheduleId, teamId, cron, enabled, lastFiredAt, nextFireAt)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(sched.scheduleId, sched.teamId, sched.cron, sched.enabled ? 1 : 0, sched.lastFiredAt ?? null, sched.nextFireAt);
+  }
+  /** Get one team schedule by scheduleId. */
+  getTeamSchedule(scheduleId: string): TeamSchedule | null {
+    const row = this.db.prepare(`SELECT * FROM ith_team_schedules WHERE scheduleId = ?`).get(scheduleId) as
+      | Record<string, unknown> | undefined;
+    if (!row) return null;
+    return parseTeamSchedule(row);
+  }
+  /** List team schedules; optionally filter to one team. */
+  listTeamSchedules(teamId?: string): TeamSchedule[] {
+    const sql = teamId
+      ? `SELECT * FROM ith_team_schedules WHERE teamId = ? ORDER BY nextFireAt`
+      : `SELECT * FROM ith_team_schedules ORDER BY nextFireAt`;
+    const rows = teamId
+      ? this.db.prepare(sql).all(teamId) as Array<Record<string, unknown>>
+      : this.db.prepare(sql).all() as Array<Record<string, unknown>>;
+    return rows.map(parseTeamSchedule);
+  }
+  /** Delete a team schedule (hard delete — schedules are cheap to recreate). */
+  deleteTeamSchedule(scheduleId: string): boolean {
+    const res = this.db.prepare(`DELETE FROM ith_team_schedules WHERE scheduleId = ?`).run(scheduleId);
+    return (res as unknown as { changes: number }).changes > 0;
+  }
+
+  // ---- Sprint 5.21 versioned team presets (ith_team_presets / ith_team_preset_revisions) ---
+
+  /** Upsert a stored preset (active) + record revision 1 if new. */
+  saveTeamPreset(preset: StoredTeamPreset): void {
+    const existing = this.getStoredPreset(preset.presetId);
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_team_presets
+         (presetId, name, source, schemaVersion, revision, definitionJson, status, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      preset.presetId, preset.name, preset.source, preset.schemaVersion, preset.revision,
+      preset.definitionJson, preset.status, preset.createdAt, preset.updatedAt,
+    );
+    if (!existing) {
+      this.db.prepare(
+        `INSERT OR REPLACE INTO ith_team_preset_revisions
+           (presetId, revision, definitionJson, createdAt)
+         VALUES (?, ?, ?, ?)`,
+      ).run(preset.presetId, preset.revision, preset.definitionJson, preset.createdAt);
+    }
+  }
+  /** Record a new revision row for a stored preset (definitions are versioned). */
+  recordPresetRevision(presetId: string, revision: number, definitionJson: string, createdAt: number): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO ith_team_preset_revisions
+         (presetId, revision, definitionJson, createdAt)
+       VALUES (?, ?, ?, ?)`,
+    ).run(presetId, revision, definitionJson, createdAt);
+  }
+  /** Get one stored preset by presetId (active only). */
+  getStoredPreset(presetId: string): StoredTeamPreset | null {
+    const row = this.db.prepare(`SELECT * FROM ith_team_presets WHERE presetId = ? AND status = 'active'`).get(presetId) as
+      | Record<string, unknown> | undefined;
+    if (!row) return null;
+    return parseStoredPreset(row);
+  }
+  /** List active stored presets. */
+  listStoredPresets(): StoredTeamPreset[] {
+    return (this.db.prepare(`SELECT * FROM ith_team_presets WHERE status = 'active' ORDER BY name`).all() as Array<Record<string, unknown>>).map(parseStoredPreset);
+  }
+  /** Soft-delete a stored preset ('deleted'); returns false if absent. */
+  softDeletePreset(presetId: string): boolean {
+    const row = this.db.prepare(`SELECT * FROM ith_team_presets WHERE presetId = ? AND status = 'active'`).get(presetId);
+    if (!row) return false;
+    this.db.prepare(`UPDATE ith_team_presets SET status = 'deleted', updatedAt = ? WHERE presetId = ?`).run(Date.now(), presetId);
+    return true;
+  }
+  /** All revisions for a stored preset, ascending. */
+  presetRevisions(presetId: string): Array<{ presetId: string; revision: number; definitionJson: string; createdAt: number }> {
+    return this.db.prepare(`SELECT * FROM ith_team_preset_revisions WHERE presetId = ? ORDER BY revision`).all(presetId) as unknown as Array<{ presetId: string; revision: number; definitionJson: string; createdAt: number }>;
   }
 
   close(): void {

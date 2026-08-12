@@ -1310,6 +1310,76 @@ try {
     try { rmSync(memRepo, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
+  // ---- Sprint 5.19 + 5.21 — /ithacus-teams (DESIGN_TEAMS_CRONS.md /
+  // DESIGN_TEAMS_AND_SIZES.md). Exercises registerTeamsCommand: registers
+  // /ithacus-teams, seeds a named team + binds a cron schedule via the pure
+  // src registry/presets, drives the overlay factory + the notify-based list
+  // subcommand. No pi TUI, no network (PREVENT-ITH-004).
+  {
+    const teamsMod = await import(join(tmpDir, "ithacus-teams.ts"));
+    const tregMod = await import(join(tmpDir, "team-registry.ts"));
+    const tpresMod = await import(join(tmpDir, "team-presets.ts"));
+    const storeMod = await import(join(tmpDir, "store.ts"));
+
+    const teamRepo = mkdtempSync(join(repoRoot, ".smoke-team-tmp-"));
+    execSync("git init -q && git config user.email t@t.co && git config user.name t && git commit -q --allow-empty -m init", { cwd: teamRepo });
+    const teamStore = new storeMod.IthStore(teamRepo, {});
+
+    // Seed a named team via the src registry.
+    tregMod.createTeamDefinition(teamStore, {
+      teamId: "t1", name: "daily-review", description: "crew",
+      agents: [{ role: "Explore" }, { role: "Plan", modelOverride: "gpt-4o" }],
+      taskTemplate: "Review {{subject}}", createdAt: 1, updatedAt: 1,
+    });
+    const tpres = tpresMod.builtinPresetById("balanced-4");
+    check("teams.registry seeded", tregMod.listTeams(teamStore).length === 1);
+    check("teams.presets builtin", tpres?.size.default === 4);
+
+    const teamsPi = { registerCommand: (name, def) => { teamsPi.registered = { name, def }; }, registerTool: () => {}, on: () => {}, setModel: () => {} };
+    const teamsRuntime = { store: teamStore, bindRepo: () => {} };
+    teamsMod.registerTeamsCommand(teamsPi, teamsRuntime);
+    check("teams.command registers /ithacus-teams", teamsPi.registered?.name === "ithacus-teams");
+    check("teams.command has handler", typeof teamsPi.registered?.def?.handler === "function");
+
+    // Overlay path: ui.custom returns a Component factory; render lists team.
+    let capturedFactory = null;
+    const overlayUi = { custom: async (factory) => { capturedFactory = factory; return null; }, notify: () => {} };
+    await teamsPi.registered.def.handler("", { cwd: teamRepo, ui: overlayUi });
+    check("teams.handler captures overlay factory", typeof capturedFactory === "function");
+    const theme = { fg: (_c, t) => t, bold: (t) => t };
+    const component = capturedFactory({ requestRender: () => {} }, theme, {}, () => {});
+    const lines = component.render(80).join("\n");
+    check("teams.render lists seeded team", lines.includes("daily-review"));
+    let closed2 = false;
+    const cmpComp = capturedFactory({ requestRender: () => {} }, theme, {}, () => { closed2 = true; });
+    cmpComp.handleInput("q");
+    check("teams.overlay q closes", closed2 === true);
+
+    // notify-based subcommand surface (list)
+    const notified = [];
+    const listUi = { custom: async () => null, notify: (msg, level) => { notified.push([msg, level]); } };
+    await teamsPi.registered.def.handler("list", { cwd: teamRepo, ui: listUi });
+    check("teams.list notifies team", notified.length === 1 && notified[0][0].includes("daily-review"));
+
+    // create subcommand persists a new team
+    const createUi = { custom: async () => null, notify: (msg) => createUi.msg = msg };
+    await teamsPi.registered.def.handler("create nightly-run Explore Plan Verification", { cwd: teamRepo, ui: createUi });
+    check("teams.create persists", tregMod.getTeam(teamStore, "nightly-run")?.agents.length === 3);
+
+    // schedule subcommand validates + persists (5-field cron)
+    const schedUi = { custom: async () => null, notify: (msg) => schedUi.msg = msg };
+    await teamsPi.registered.def.handler("schedule nightly-run 0 9 * * *", { cwd: teamRepo, ui: schedUi });
+    check("teams.schedule binds cron", tregMod.listTeamSchedules(teamStore, tregMod.getTeam(teamStore, "nightly-run").teamId).length === 1);
+
+    // invalid cron is rejected (notify error, nothing persisted)
+    const badSchedUi = { custom: async () => null, notify: (msg, level) => badSchedUi.level = level };
+    await teamsPi.registered.def.handler("schedule nightly-run not-a-cron", { cwd: teamRepo, ui: badSchedUi });
+    check("teams.schedule invalid rejected", badSchedUi.level === "error");
+
+    teamStore.close();
+    try { rmSync(teamRepo, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
   // ---- summary ----------------------------------------------------------
   const passed = checks.filter(([, ok]) => ok).length;
   const failed = checks.length - passed;
