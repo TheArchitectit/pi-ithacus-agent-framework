@@ -82,26 +82,36 @@ export function registerAgentHandlers(
   });
 
   pi.on("turn_end", async (_event, ctx) => {
-    // B4 (Sprint 5.29): best-effort echo of the turn into mega's TurnStore so a
-    // later bridge.fork() is possible. ConversationId↔SessionId mapping: ithacus
-    // has no separate conversationId, so both use runtime.sessionId (documented
-    // as ITHACUS_MEGA_SESSION_ID for the parent). Triple-redundancy: (a) flag
-    // gate, (b) runtime.megaBridge null-check, (c) try/catch non-fatal — on
-    // null/throw no turn is recorded and any future fork() throws NO_RECALL
-    // (caller handles). No parent compaction here (single-compaction-authority).
-    if (runtime.config.megaBridge && runtime.megaBridge) {
-      try {
-        runtime.megaBridge.recordTurn({
-          conversationId: runtime.sessionId,
-          sessionId: runtime.sessionId,
-          turnIndex: runtime.currentTurn,
-          role: "assistant",
-          endedAt: Date.now(),
-        });
-      } catch {
-        /* non-fatal: turn record failure must never break the loop */
-      }
-    }
+    // Single-turn-recording-authority (2026-08-12), mirroring single-compaction-
+    // authority: in a parent session pi-mega-compact's OWN extension records every
+    // turn natively (mega's turnEndHandler/recordTurnRow), writing the FULL row
+    // (ctxTokens, ctxPercent, model) to mega's own conversation id (conv_*). ithacus
+    // therefore does NOT call bridge.recordTurn here. The previous echo wrote a
+    // SPARSE row (model=null, no ctxTokens) to a SEPARATE "global" conversation —
+    // not a race on the same (conversationId, turnIndex) as mega's conv_* writes,
+    // but a useless duplicate-in-spirit that fragmented turn history and would have
+    // made a later bridge.fork() read sparse rows instead of mega's real ones.
+    // A later bridge.fork() still works: it reads mega's natively-recorded turns.
+    // bridge.recordTurn remains in the contract for the CHILD path, where mega's
+    // full extension is not loaded and nothing else records turns.
+    // No parent compaction here either (single-compaction-authority).
+    //
+    // NOTE (C2 finding, future mega-compact fix): this change does NOT fix the
+    // 557 turn_write_failed events in RADOPENCODE/.pi/mega-compact/events.log —
+    // those are a SEPARATE mega-compact session-RESUME bug. When pi resumes a
+    // session with the same mega sessionId, mega's conversation persists (conv_*
+    // rows survive) but turnIndex restarts at 0, so mega's native recordTurnRow
+    // re-attempts turns that already exist → DuplicateTurnError (logged as
+    // turn_write_failed). 502/557 came from one 18h conversation resumed ~7×.
+    // The bridge's own "global" duplicates were swallowed by ithacus's try/catch
+    // (never logged). The 557 errors are also invisible to mega's errorRate
+    // health metric (errorRate tracks API-retry errors via lastErrorCategory,
+    // not store-write errors) — an observability gap. The "drift warn" on the
+    // status line is unrelated too: it is the cross-repo compaction_lag signal
+    // (RADOPENCODE never compacted), not an error-rate signal. Tracked for a
+    // mega-compact follow-up: handle session resume in recordTurnRow (continue
+    // turnIndex / skip-existing / downgrade DuplicateTurnError to non-notable)
+    // and surface store-write errors in the health dashboard.
     runtime.snapshotIfReady(ctx);
   });
 }
