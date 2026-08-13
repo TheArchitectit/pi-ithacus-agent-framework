@@ -121,9 +121,19 @@ export function resolveMegaChildExtensionPath(
 /**
  * Resolve the mega-compact child extension to an absolute path that exists on
  * disk, or null. Locates the installed package via `import.meta.resolve`
- * (wrapped in try/catch for older Node lacking it), then prefers the
- * dist `.js` (npm-installed) over the source `.ts` (dev). Returns null when
- * mega-compact is absent or the child extension file is not on disk.
+ * (wrapped in try/catch for older Node lacking it), then searches the
+ * subdirectories where the child extension actually ships:
+ *   1. `dist/extensions/` — the compiled `.js` (npm-installed; what pi loads).
+ *   2. `extensions/` — the source `.ts` (shipped in npm + dev repo).
+ *   3. package root — legacy fallback (no subdirectory).
+ * The previous version checked ONLY the package root, where the child extension
+ * is absent in the npm layout (it ships under dist/extensions/), so resolution
+ * returned null and ithacus silently skipped the second `-e` (the 4th-layer
+ * path-resolution guard degraded) — children never loaded mega-compact's child
+ * extension. Found in C2-cont (2026-08-13): the dispatched writer/verification
+ * children had no ITHACUS_MEGA_SESSION_ID events and no child conversation in
+ * turns.db. Mirrors the dist/src layout gotcha (the bridge itself loads from
+ * dist/src/bridge.js, not the package root).
  */
 export function resolveMegaChildExtensionPathDefault(): string | null {
   let pkgDir: string | undefined;
@@ -135,5 +145,11 @@ export function resolveMegaChildExtensionPathDefault(): string | null {
     return null;
   }
   if (!pkgDir) return null;
-  return resolveMegaChildExtensionPath(pkgDir, false);
+  // Search the subdirectories where the child extension actually ships, in
+  // preference order: compiled dist .js (npm) → source .ts (npm/dev) → root.
+  for (const sub of ["dist/extensions", "extensions", "."]) {
+    const found = resolveMegaChildExtensionPath(join(pkgDir, sub), false);
+    if (found) return found;
+  }
+  return null;
 }
