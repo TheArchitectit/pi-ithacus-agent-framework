@@ -36,6 +36,7 @@ import * as s33 from "./smoke-src/33-a2a-accounting.mjs";
 import * as s34 from "./smoke-src/34-checkpoints.mjs";
 import * as s35 from "./smoke-src/35-consolidate.mjs";
 import * as s36 from "./smoke-src/36-team-registry-presets-executor.mjs";
+import * as s37 from "./smoke-src/37-mega-bridge-conformance.mjs";
 
 import { failures, buildDir, tmpRepo } from "./smoke-src/_harness.mjs";
 import { rmSync } from "node:fs";
@@ -69,6 +70,7 @@ try {
   await s34.run(ctx); // Sprint 5.16 checkpoint manager (runs before 24's exit)
   await s35.run(ctx); // Sprint 5.18 memory consolidation (before 24's exit)
   await s36.run(ctx); // Sprint 5.19 + 5.21 teams/presets/executor (before 24's exit)
+  await s37.run(ctx); // Sprint 5.29 mega-compact bridge conformance + round-trip
   await s24.run(ctx);
   await s25.run(ctx);
   await s26.run(ctx);
