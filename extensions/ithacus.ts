@@ -31,6 +31,14 @@ import { bundledAgentsDir, projectAgentsDir } from "./ithacus-agents.js";
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
   const runtime = new IthRuntime(config);
+  // Sprint 5.29 (BIDIRECTIONAL_MEGA_BRIDGE.md): lazily load the pi-mega-compact
+  // bridge (non-fatal; handlers check megaBridge for null until it resolves).
+  // Fire-and-forget — a failed/overdue load never blocks activation.
+  if (config.megaBridge) {
+    runtime.loadMegaBridge().catch(() => {
+      /* non-fatal: runtime.megaBridge stays null */
+    });
+  }
   // Sprint 5.12.5 (DESIGN_AGENT_BUNDLES.md): seed the bundled agent roster
   // into <repo>/.pi/ithacus/agents/ — version-gated, user-edit safe (edited
   // files are reported, never clobbered). Best-effort: a failed seed is

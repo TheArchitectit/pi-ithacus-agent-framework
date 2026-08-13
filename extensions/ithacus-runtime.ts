@@ -19,6 +19,8 @@ import { repoStateDir, STATE_DIR_DEFAULT, type IthacusConfig } from "../src/conf
 import { resolveRepoRoot } from "../src/config.js";
 import { currentPressure } from "../src/trim.js";
 import { createEventBus, type IthacusEventBus } from "../src/event-bus.js";
+import type { MegaBridgeContract } from "../src/mega-bridge-contract.js";
+import { loadMegaBridge } from "../src/mega-bridge-loader.js";
 
 export class IthRuntime {
   config: IthacusConfig;
@@ -51,6 +53,12 @@ export class IthRuntime {
    *  the mounted card to toggle show/hide/size WITHOUT a new render cycle —
    *  null until the first card mounts (and after a session without a card). */
   liveCardHandle: { hide(): void; setHidden(hidden: boolean): void } | null = null;
+
+  /** Sprint 5.29 (BIDIRECTIONAL_MEGA_BRIDGE.md): the lazily-loaded mega-compact
+   *  bridge. null until loadMegaBridge() resolves (or permanently null when the
+   *  flag is OFF / pi-mega-compact is absent — ithacus is standalone). Handlers
+   *  must check for null. */
+  megaBridge: MegaBridgeContract | null = null;
 
   constructor(config: IthacusConfig) {
     this.config = config;
@@ -146,9 +154,27 @@ export class IthRuntime {
 
   dispose(): void {
     try {
+      this.megaBridge?.close();
+    } catch {
+      /* non-fatal */
+    }
+    try {
       this.store.close();
     } catch {
       /* non-fatal */
+    }
+  }
+
+  /**
+   * Lazily load the mega-compact bridge (Sprint 5.29). Non-fatal: on any
+   * failure (flag OFF, package absent, construct throw) `this.megaBridge`
+   * stays null and ithacus remains standalone. Fire-and-forget from the entry.
+   */
+  async loadMegaBridge(): Promise<void> {
+    try {
+      this.megaBridge = await loadMegaBridge(this.config);
+    } catch {
+      this.megaBridge = null;
     }
   }
 }

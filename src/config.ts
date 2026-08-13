@@ -58,6 +58,13 @@ export interface IthacusConfig {
    *  by default. Default OFF; set ITHACUS_SELF_COMPACT=true to restore the
    *  legacy P7 self-trim (sessions running WITHOUT pi-mega-compact loaded). */
   selfCompact: boolean;
+  /** Sprint 5.29 (BIDIRECTIONAL_MEGA_BRIDGE.md): opt-in bidirectional bridge to
+   *  pi-mega-compact. When ON (default) AND pi-mega-compact is resolvable,
+   *  ithacus drives mega's compaction/recall/memory/fork/vector APIs via a lazy
+   *  dynamic import (see src/mega-bridge-loader.ts). When OFF or mega is
+   *  absent, ithacus is fully standalone (byte-identical to pre-bridge).
+   *  Default ON; set ITHACUS_MEGA_BRIDGE=false|0 to disable. */
+  megaBridge: boolean;
   debug: boolean;
   /** Cross-repo memory recall enabled. */
   memoryRecall: boolean;
@@ -331,6 +338,7 @@ export function loadConfig(projectRemote?: unknown, projectUi?: unknown): Ithacu
     preserveRecent: envNum("ITHACUS_PRESERVE_RECENT", 4),
     tierPct: envNum("ITHACUS_TIER_PCT", 0.7),
     selfCompact: envBool("ITHACUS_SELF_COMPACT", false),
+    megaBridge: envBool("ITHACUS_MEGA_BRIDGE", true),
     trimDebounceMs: envNum("ITHACUS_TRIM_DEBOUNCE_MS", 2000),
     debug: envBool("ITHACUS_DEBUG", false),
     memoryRecall: envBool("ITHACUS_MEMORY_RECALL", true),

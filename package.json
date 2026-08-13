@@ -30,9 +30,18 @@
     "gate": "npm run build && npm run lint && npm run guardrails && npm run semantic && npm run schema-health && npm run regression && npm test"
   },
   "dependencies": {},
+  "peerDependencies": {
+    "pi-mega-compact": "^0.21.3"
+  },
+  "peerDependenciesMeta": {
+    "pi-mega-compact": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^22.0.0",
+    "pi-mega-compact": "^0.21.3",
     "typescript": "^5.5.0"
   }
 }
