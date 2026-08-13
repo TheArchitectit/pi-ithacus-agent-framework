@@ -38,7 +38,7 @@ export function registerSessionHandlers(
     }
   });
 
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (!runtime.config.memoryRecall) return;
     try {
       const repoId = runtime.repoId(ctx.cwd);
@@ -54,6 +54,33 @@ export function registerSessionHandlers(
       return { systemPrompt: `${sp}\n\n[ithacus] recalled memory for this repo:\n${block}` };
     } catch {
       /* non-fatal: memory recall must never break the agent loop */
+    }
+  });
+
+  // B4 (Sprint 5.29): optionally ALSO inject durable memories from pi-mega-compact
+  // when the flag-gated bridge is resolved. RECALL-ONLY here — the bridge does not
+  // compact the parent (single-compaction-authority: mega's own extension owns
+  // parent compaction). Triple-redundancy: (a) config.megaBridge flag gate,
+  // (b) runtime.megaBridge null-check (fire-and-forget load may not have resolved,
+  // or mega may be absent / flag-off → null), (c) try/catch non-fatal so a bridge
+  // failure never breaks the agent loop. The ith_memories block above injects
+  // unchanged whether or not the mega recall runs.
+  pi.on("before_agent_start", async (event, _ctx) => {
+    if (!runtime.config.megaBridge || !runtime.megaBridge) return;
+    try {
+      const query = (event as { prompt?: string }).prompt ?? "";
+      if (!query.trim()) return;
+      const res = await runtime.megaBridge.recallMemories({ query, limit: 5 });
+      if (!res || res.empty || !res.block) return;
+      // Pi CHAINS before_agent_start returns: each handler receives the prior
+      // handler's modified prompt via `event.systemPrompt` (NOT ctx.getSystemPrompt(),
+      // which returns the original base prompt and would clobber the ith_memories
+      // block the first handler above already prepended). Prepend onto the chained
+      // value so both recall blocks compose.
+      const sp = (event as { systemPrompt?: string }).systemPrompt ?? "";
+      return { systemPrompt: `${sp}\n\n[mega-compact] recalled memory:\n${res.block}` };
+    } catch {
+      /* non-fatal: mega recall must never break the agent loop */
     }
   });
 

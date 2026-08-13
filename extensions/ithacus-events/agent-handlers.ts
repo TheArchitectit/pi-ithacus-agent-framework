@@ -82,6 +82,26 @@ export function registerAgentHandlers(
   });
 
   pi.on("turn_end", async (_event, ctx) => {
+    // B4 (Sprint 5.29): best-effort echo of the turn into mega's TurnStore so a
+    // later bridge.fork() is possible. ConversationId↔SessionId mapping: ithacus
+    // has no separate conversationId, so both use runtime.sessionId (documented
+    // as ITHACUS_MEGA_SESSION_ID for the parent). Triple-redundancy: (a) flag
+    // gate, (b) runtime.megaBridge null-check, (c) try/catch non-fatal — on
+    // null/throw no turn is recorded and any future fork() throws NO_RECALL
+    // (caller handles). No parent compaction here (single-compaction-authority).
+    if (runtime.config.megaBridge && runtime.megaBridge) {
+      try {
+        runtime.megaBridge.recordTurn({
+          conversationId: runtime.sessionId,
+          sessionId: runtime.sessionId,
+          turnIndex: runtime.currentTurn,
+          role: "assistant",
+          endedAt: Date.now(),
+        });
+      } catch {
+        /* non-fatal: turn record failure must never break the loop */
+      }
+    }
     runtime.snapshotIfReady(ctx);
   });
 }

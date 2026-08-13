@@ -30,7 +30,10 @@ import {
   type AgentConfig,
 } from "./ithacus-agents.js";
 import { loadPiSetupConfig } from "./ithacus-provider-config.js";
+import { loadConfig } from "../src/config.js"; // B5: read ITHACUS_MEGA_BRIDGE flag
 import { resolveProviderForModel } from "../src/provider-resolver.js";
+import { repoIdFromCwd } from "../src/store.js"; // B5: stable ITHACUS_MEGA_SESSION_ID per-repo
+import { resolveMegaChildExtensionPathDefault } from "../src/mega-bridge-loader.js"; // B5: 4th-layer path guard
 import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
@@ -303,6 +306,28 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
   if (CHILD_MAILBOX_EXTENSION) {
     args.push("-e", CHILD_MAILBOX_EXTENSION);
   }
+  // B5 (Sprint 5.29): when the flag-gated mega bridge is ON, ALSO load mega's
+  // child extension into the child so it can recall + compact against a STABLE
+  // sessionId (ITHACUS_MEGA_SESSION_ID below). 4th-layer path-resolution guard:
+  // resolveMegaChildExtensionPathDefault() returns null when pi-mega-compact is
+  // not installed → no second `-e`, child runs mailbox-only (today's behavior).
+  // mega's child registers NO tools (no duplicate-tool hard-fail) and NO
+  // console.log (no JSONL pollution) — verified on the mega side. `--no-extensions`
+  // still holds (only the two explicit `-e` files load).
+  // B5 (Sprint 5.29): when the flag-gated mega bridge is ON, ALSO load mega's
+  // child extension into the child so it can recall + compact against a STABLE
+  // sessionId (ITHACUS_MEGA_SESSION_ID below). 4th-layer path-resolution guard:
+  // resolveMegaChildExtensionPathDefault() returns null when pi-mega-compact is
+  // not installed → no second `-e`, child runs mailbox-only (today's behavior).
+  // mega's child registers NO tools (no duplicate-tool hard-fail) and NO
+  // console.log (no JSONL pollution) — verified on the mega side. `--no-extensions`
+  // still holds (only the two explicit `-e` files load).
+  // loadConfig() reads the ITHACUS_MEGA_BRIDGE env flag (default ON) — spawnAgent
+  // receives only opts, so config is read here rather than threaded through calls.
+  if (loadConfig().megaBridge) {
+    const megaChild = resolveMegaChildExtensionPathDefault();
+    if (megaChild) args.push("-e", megaChild);
+  }
   if (resolvedModel) args.push("--model", resolvedModel);
   if (resolvedProvider) args.push("--provider", resolvedProvider);
   if (tools && tools.length > 0) args.push("--tools", tools.join(","));
@@ -336,7 +361,15 @@ export async function spawnAgent(opts: SpawnAgentOpts): Promise<SpawnAgentResult
         stdio: ["ignore", "pipe", "pipe"],
         // Child identity: mirrors claw-code's CLAWD_AGENT_ID convention so a
         // spawned agent can identify itself (mailbox addressing, telemetry).
-        env: { ...process.env, ITHACUS_AGENT_ID: agent.name },
+        env: {
+          ...process.env,
+          ITHACUS_AGENT_ID: agent.name,
+          // B5 (Sprint 5.29): STABLE sessionId for mega's child extension to use
+          // for recall + compaction. Fixes the openclaw Date.now() gotcha — the
+          // second dispatch of the same agent must recall the first's checkpoint,
+          // so this must be deterministic (agentName + repoId), NOT time-based.
+          ITHACUS_MEGA_SESSION_ID: `ithacus-child-${agent.name}-${repoIdFromCwd(opts.cwd)}`,
+        },
       });
       let buffer = "";
 

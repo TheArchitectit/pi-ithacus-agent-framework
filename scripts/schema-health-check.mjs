@@ -68,6 +68,11 @@ const EXPECTED_COLUMNS = [
   ["ith_memories", "text"],
   ["ith_memories", "repoId"],
   ["ith_memories", "ts"],
+  // B7 (Sprint 5.29): close pre-existing drift — these migration-added columns
+  // (src/store.ts applyConsolidation) were never registered. Bridge adds none.
+  ["ith_memories", "superseded_by"],
+  ["ith_memories", "collapsed_into"],
+  ["ith_memories", "cluster_tag"],
 
   ["ith_worktrees", "agentId"],
   ["ith_worktrees", "runId"],

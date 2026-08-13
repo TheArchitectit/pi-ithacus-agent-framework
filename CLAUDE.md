@@ -9,7 +9,7 @@ Keep these four entities straight. Do NOT conflate them. Ever.
 | **ithacus** | **The PROJECT.** A standalone agent framework that runs with pi.dev, letting you set different agents with different models to do task work. This is what we are BUILDING. | Everything in `src/`, `extensions/`, `docs/` |
 | **DevGate** | The development FRAMEWORK / dev tooling. Test runner, regression scanner, guardrails scanner, semantic scanner, schema-health, deploy pipeline, CI workflows. NOT a thing being built here — adapted copies live in `ithacus/scripts/` + `.github/workflows/`. Source clone is gitignored at `DevGate-Agentic-Framework/`. | `scripts/` (vendored adapted copies), `.github/workflows/` |
 | **.guardrails/** | The RULES we follow. `pattern-rules.json` (PREVENT-ITH-* / PREVENT-DIST-*) + `semantic-rules.json` (SEMANTIC-*) + `failure-registry.jsonl` (bug db). DevGate scripts ENFORCE these; guardrails = the policy. | `.guardrails/` |
-| **pi-mega-compact** | A SEPARATE, UNRELATED project (a compression extension). ithacus is NOT pi-mega-compact and is NOT a derivative of it. All references to it must be REMOVED from this repo. Do not re-introduce them. | OUT of scope. Scrub on sight. |
+| **pi-mega-compact** | A SEPARATE, UNRELATED project (a compression extension). ithacus is NOT pi-mega-compact and is NOT a derivative of it. OPTIONAL bridge partner: when both extensions are installed and `ITHACUS_MEGA_BRIDGE` is ON, ithacus may use mega-compact's bridge API (recall + compaction + fork) as a peer integration — never as a base to derive from. | Optional bridge partner (flag-gated, degrades to standalone). |
 
 **The mission, stated plainly:**
 > ithacus is an agent framework to run with pi.dev so we can set different
@@ -41,6 +41,12 @@ ithacus is its own framework. It is NOT a derivative of pi-mega-compact or
 any other extension. Historical repo comments mentioning pi-mega-compact as a
 "pattern source" are STALE and are being scrubbed (task #25) — do not treat
 them as authoritative and do not re-introduce such references.
+
+EXCEPTION: the optional `ITHACUS_MEGA_BRIDGE` integration (§0) sanctions
+programmatic access to mega-compact's bridge API when both extensions are
+installed; this is a peer integration, not derivation. The existing
+`src/config.ts` + `extensions/ithacus.ts` "mirrors pi-mega-compact" comments
+are sanctioned as design-pattern references.
 
 ## 1. Architecture at a glance
 
