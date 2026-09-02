@@ -1,5 +1,4 @@
 # ithacus
-[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-FF69B4?style=flat&logo=github-sponsors)](https://github.com/sponsors/TheArchitectit)
 
 Turns [pi](https://github.com/earendil-works/pi) from a single coding agent into a team.
 
