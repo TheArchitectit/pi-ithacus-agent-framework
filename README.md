@@ -1,5 +1,7 @@
 # ithacus
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-TheArchitectit-FF69B4?style=flat&logo=github-sponsors)](https://github.com/sponsors/TheArchitectit)
+
 Turns [pi](https://github.com/earendil-works/pi) from a single coding agent into a team.
 
 ithacus is the orchestration layer that sits between pi and your LLM provider. It handles the stuff that matters when you're running multiple agents: who gets which task, what model they use, how much it costs, what happens when they fail, and how their context survives long enough to actually finish the job.
